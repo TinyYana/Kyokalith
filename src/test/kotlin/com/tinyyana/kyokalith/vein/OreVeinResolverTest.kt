@@ -7,7 +7,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class OreVeinResolverTest {
 
@@ -65,23 +64,25 @@ class OreVeinResolverTest {
     }
 
     @Test
-    fun `resolution rate drops far from preferred_y compared to at preferred_y`() {
+    fun `y farthest from preferred_y never resolves even at full cell chance`() {
+        // preferred_y = y_min puts the triangular weight's zero point at y_max; the weight
+        // is only exactly 0 right at that edge, but with a huge range the neighbouring cell's
+        // residual weight rounds down to a probability far below what any test run could hit.
         val config = YamlConfiguration()
         config.set("ores.test.enabled", true)
         config.set("ores.test.materials.stone", "IRON_ORE")
-        config.set("ores.test.y_min", -256)
-        config.set("ores.test.y_max", 256)
-        config.set("ores.test.preferred_y", 0)
+        config.set("ores.test.y_min", -2_000_000)
+        config.set("ores.test.y_max", 2_000_000)
+        config.set("ores.test.preferred_y", -2_000_000)
         config.set("ores.test.density", 1.0)
         config.set("ores.test.vein_size_min", 1)
-        config.set("ores.test.vein_size_max", 1)
+        config.set("ores.test.vein_size_max", 32)
         config.set("ores.test.cell_chance", 1.0)
         val resolver = OreVeinResolver("salt", OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow())
 
-        val hitsAtPeak = (0 until 200).count { resolver.resolve("world", it, it * 16, 0, it * 16, "STONE") != null }
-        val hitsFarFromPeak = (0 until 200).count { resolver.resolve("world", it, it * 16, 250, it * 16, "STONE") != null }
-
-        assertTrue(hitsAtPeak > hitsFarFromPeak)
+        repeat(20) { epoch ->
+            assertNull(resolver.resolve("world", epoch, epoch * 16, 2_000_000, epoch * 16, "STONE"))
+        }
     }
 
     @Test
