@@ -1,0 +1,18 @@
+[versions]
+kotlin = "2.4.20-Beta1"
+
+paper-api = "26.2.build.+"
+minecraft = "26.2"
+sqlite-jdbc = "3.49.1.0"
+
+shadow = "9.4.3"
+run-task = "3.0.2"
+
+[libraries]
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+
+[plugins]
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-task" }

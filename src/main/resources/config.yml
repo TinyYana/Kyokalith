@@ -1,0 +1,153 @@
+# Kyokalith 主設定
+# datapack/kyokalith-strip-ores 提供正式世界生成抹礦;strip_existing_chunks 負責舊世界遷移。
+# 礦脈函數、曝露掃描、eligible token、d20 bridge 與 NatureRevive epoch 整合已在程式內實作。
+
+database:
+  file: kyokalith.db
+  dirty_flush_interval_ticks: 40
+
+materialization:
+  scan_blocks_per_tick: 1024
+  strip_existing_chunks: true
+
+ores:
+  coal:
+    enabled: true
+    materials:
+      stone: COAL_ORE
+      deepslate: DEEPSLATE_COAL_ORE
+    y_min: 0
+    y_max: 320
+    preferred_y: 96
+    density: 1.0
+    exposed_density_multiplier: 1.0
+    vein_size_min: 1
+    vein_size_max: 10
+    cell_chance: 0.03
+  iron:
+    enabled: true
+    materials:
+      stone: IRON_ORE
+      deepslate: DEEPSLATE_IRON_ORE
+    y_min: -64
+    y_max: 256
+    preferred_y: 16
+    density: 1.0
+    exposed_density_multiplier: 0.9
+    vein_size_min: 1
+    vein_size_max: 9
+    cell_chance: 0.025
+  copper:
+    enabled: true
+    materials:
+      stone: COPPER_ORE
+      deepslate: DEEPSLATE_COPPER_ORE
+    y_min: -16
+    y_max: 112
+    preferred_y: 48
+    density: 1.0
+    exposed_density_multiplier: 0.9
+    vein_size_min: 1
+    vein_size_max: 10
+    cell_chance: 0.02
+  gold:
+    enabled: true
+    materials:
+      stone: GOLD_ORE
+      deepslate: DEEPSLATE_GOLD_ORE
+    y_min: -64
+    y_max: 32
+    preferred_y: -16
+    density: 1.0
+    exposed_density_multiplier: 0.75
+    vein_size_min: 1
+    vein_size_max: 9
+    cell_chance: 0.012
+  redstone:
+    enabled: true
+    materials:
+      stone: REDSTONE_ORE
+      deepslate: DEEPSLATE_REDSTONE_ORE
+    y_min: -64
+    y_max: 16
+    preferred_y: -32
+    density: 1.0
+    exposed_density_multiplier: 0.8
+    vein_size_min: 1
+    vein_size_max: 8
+    cell_chance: 0.018
+  lapis:
+    enabled: true
+    materials:
+      stone: LAPIS_ORE
+      deepslate: DEEPSLATE_LAPIS_ORE
+    y_min: -64
+    y_max: 64
+    preferred_y: 0
+    density: 1.0
+    exposed_density_multiplier: 0.75
+    vein_size_min: 1
+    vein_size_max: 7
+    cell_chance: 0.014
+  diamond:
+    enabled: true
+    materials:
+      stone: DIAMOND_ORE
+      deepslate: DEEPSLATE_DIAMOND_ORE
+    y_min: -64
+    y_max: 16
+    preferred_y: -59
+    density: 1.0
+    exposed_density_multiplier: 0.65
+    vein_size_min: 1
+    vein_size_max: 8
+    cell_chance: 0.018
+  emerald:
+    enabled: true
+    materials:
+      stone: EMERALD_ORE
+      deepslate: DEEPSLATE_EMERALD_ORE
+    y_min: -16
+    y_max: 256
+    preferred_y: 224
+    density: 1.0
+    exposed_density_multiplier: 0.6
+    vein_size_min: 1
+    vein_size_max: 3
+    cell_chance: 0.006
+  nether_quartz:
+    enabled: true
+    materials:
+      stone: NETHER_QUARTZ_ORE
+    y_min: 10
+    y_max: 117
+    preferred_y: 60
+    density: 1.0
+    exposed_density_multiplier: 1.0
+    vein_size_min: 1
+    vein_size_max: 10
+    cell_chance: 0.03
+  nether_gold:
+    enabled: true
+    materials:
+      stone: NETHER_GOLD_ORE
+    y_min: 10
+    y_max: 117
+    preferred_y: 60
+    density: 1.0
+    exposed_density_multiplier: 1.0
+    vein_size_min: 1
+    vein_size_max: 10
+    cell_chance: 0.02
+  ancient_debris:
+    enabled: true
+    materials:
+      stone: ANCIENT_DEBRIS
+    y_min: 8
+    y_max: 119
+    preferred_y: 15
+    density: 1.0
+    exposed_density_multiplier: 0.5
+    vein_size_min: 1
+    vein_size_max: 2
+    cell_chance: 0.004
