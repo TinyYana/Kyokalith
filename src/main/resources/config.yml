@@ -1,15 +1,15 @@
-# Kyokalith 主設定
-# datapack/kyokalith-strip-ores 提供正式世界生成抹礦;strip_existing_chunks 負責舊世界遷移。
-# 礦脈函數、曝露掃描、eligible token、d20 bridge 與 NatureRevive epoch 整合已在程式內實作。
+# Kyokalith 主設定(v0.4 誘餌模型)
+# 原版世界生成礦保留當誘餌,完全埋藏的座標在首次曝露時由決定性礦脈函數決算;
+# 沒有 chunk 掃描、沒有 datapack 抹礦。礦脈函數、eligible token、d20 bridge
+# 與 NatureRevive epoch 整合都在程式內實作。
 
 database:
   file: kyokalith.db
   dirty_flush_interval_ticks: 40
 
-materialization:
-  scan_blocks_per_tick: 1024
-  strip_existing_chunks: true
-
+# dimension 對應 Bukkit World.Environment(NORMAL/NETHER/THE_END),省略預設 NORMAL。
+# 未設定會導致該礦種在所有維度都可能命中——下界限定礦種務必明確標 NETHER。
+# enabled: false 的礦種 Kyokalith 完全不管:誘餌保持原版、挖掘走原版、不觸發檢定。
 ores:
   coal:
     enabled: true
@@ -20,10 +20,9 @@ ores:
     y_max: 320
     preferred_y: 96
     density: 1.0
-    exposed_density_multiplier: 1.0
     vein_size_min: 1
     vein_size_max: 10
-    cell_chance: 0.03
+    cell_chance: 0.045
   iron:
     enabled: true
     materials:
@@ -33,10 +32,9 @@ ores:
     y_max: 256
     preferred_y: 16
     density: 1.0
-    exposed_density_multiplier: 0.9
     vein_size_min: 1
     vein_size_max: 9
-    cell_chance: 0.025
+    cell_chance: 0.038
   copper:
     enabled: true
     materials:
@@ -46,10 +44,9 @@ ores:
     y_max: 112
     preferred_y: 48
     density: 1.0
-    exposed_density_multiplier: 0.9
     vein_size_min: 1
     vein_size_max: 10
-    cell_chance: 0.02
+    cell_chance: 0.030
   gold:
     enabled: true
     materials:
@@ -59,10 +56,9 @@ ores:
     y_max: 32
     preferred_y: -16
     density: 1.0
-    exposed_density_multiplier: 0.75
     vein_size_min: 1
     vein_size_max: 9
-    cell_chance: 0.012
+    cell_chance: 0.018
   redstone:
     enabled: true
     materials:
@@ -72,10 +68,9 @@ ores:
     y_max: 16
     preferred_y: -32
     density: 1.0
-    exposed_density_multiplier: 0.8
     vein_size_min: 1
     vein_size_max: 8
-    cell_chance: 0.018
+    cell_chance: 0.027
   lapis:
     enabled: true
     materials:
@@ -85,10 +80,9 @@ ores:
     y_max: 64
     preferred_y: 0
     density: 1.0
-    exposed_density_multiplier: 0.75
     vein_size_min: 1
     vein_size_max: 7
-    cell_chance: 0.014
+    cell_chance: 0.021
   diamond:
     enabled: true
     materials:
@@ -98,10 +92,9 @@ ores:
     y_max: 16
     preferred_y: -59
     density: 1.0
-    exposed_density_multiplier: 0.65
     vein_size_min: 1
     vein_size_max: 8
-    cell_chance: 0.018
+    cell_chance: 0.027
   emerald:
     enabled: true
     materials:
@@ -111,43 +104,42 @@ ores:
     y_max: 256
     preferred_y: 224
     density: 1.0
-    exposed_density_multiplier: 0.6
     vein_size_min: 1
     vein_size_max: 3
-    cell_chance: 0.006
+    cell_chance: 0.009
   nether_quartz:
     enabled: true
+    dimension: NETHER
     materials:
       stone: NETHER_QUARTZ_ORE
     y_min: 10
     y_max: 117
     preferred_y: 60
     density: 1.0
-    exposed_density_multiplier: 1.0
     vein_size_min: 1
     vein_size_max: 10
-    cell_chance: 0.03
+    cell_chance: 0.045
   nether_gold:
     enabled: true
+    dimension: NETHER
     materials:
       stone: NETHER_GOLD_ORE
     y_min: 10
     y_max: 117
     preferred_y: 60
     density: 1.0
-    exposed_density_multiplier: 1.0
     vein_size_min: 1
     vein_size_max: 10
-    cell_chance: 0.02
+    cell_chance: 0.030
   ancient_debris:
     enabled: true
+    dimension: NETHER
     materials:
       stone: ANCIENT_DEBRIS
     y_min: 8
     y_max: 119
     preferred_y: 15
     density: 1.0
-    exposed_density_multiplier: 0.5
     vein_size_min: 1
     vein_size_max: 2
-    cell_chance: 0.004
+    cell_chance: 0.006

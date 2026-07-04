@@ -25,8 +25,15 @@ class OreEligibilityService(private val plugin: KyokalithPlugin) {
         val local = LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
         if (plugin.dirtyPositionStore.isDirty(epoched, local)) return null
 
-        val result = plugin.oreVeinResolver.resolve(block.world.name, epoch, block.x, block.y, block.z, base.name)
-            ?: return null
+        val result = plugin.oreVeinResolver.resolve(
+            block.world.name,
+            epoch,
+            block.x,
+            block.y,
+            block.z,
+            base.name,
+            block.world.environment.name,
+        ) ?: return null
         if (result.material != materialName) return null
         return EligibleOreBlock(EligibilitySource.NATURAL_BLOCK, result.oreType, result.material, epoch)
     }

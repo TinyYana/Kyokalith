@@ -6,6 +6,7 @@ import org.bukkit.configuration.ConfigurationSection
 class OreRegistry private constructor(
     private val ores: Map<String, OreDefinition>,
     private val oreMaterials: Set<String>,
+    private val enabledOreMaterials: Set<String>,
 ) {
 
     fun all(): Collection<OreDefinition> = ores.values
@@ -15,6 +16,9 @@ class OreRegistry private constructor(
     operator fun get(oreType: String): OreDefinition? = ores[oreType]
 
     fun isOreMaterial(material: String): Boolean = material in oreMaterials
+
+    /** 曝露決算只管已啟用礦種的誘餌;停用礦種完全維持原版行為。 */
+    fun isEnabledOreMaterial(material: String): Boolean = material in enabledOreMaterials
 
     companion object {
         fun load(section: ConfigurationSection?): Result<OreRegistry> = runCatching {
@@ -28,11 +32,11 @@ class OreRegistry private constructor(
                     enabled = ore.getBoolean("enabled", true),
                     stoneMaterial = materials?.getString("stone"),
                     deepslateMaterial = materials?.getString("deepslate"),
+                    dimension = ore.getString("dimension", "NORMAL")!!,
                     yMin = ore.getInt("y_min"),
                     yMax = ore.getInt("y_max"),
                     preferredY = ore.getInt("preferred_y"),
                     density = ore.getDouble("density", 1.0),
-                    exposedDensityMultiplier = ore.getDouble("exposed_density_multiplier", 1.0),
                     veinSizeMin = ore.getInt("vein_size_min", 1),
                     veinSizeMax = ore.getInt("vein_size_max", 1),
                     cellChance = ore.getDouble("cell_chance"),
@@ -42,7 +46,11 @@ class OreRegistry private constructor(
             val oreMaterials = defs.values
                 .flatMap { listOfNotNull(it.stoneMaterial, it.deepslateMaterial) }
                 .toSet()
-            OreRegistry(defs, oreMaterials)
+            val enabledOreMaterials = defs.values
+                .filter { it.enabled }
+                .flatMap { listOfNotNull(it.stoneMaterial, it.deepslateMaterial) }
+                .toSet()
+            OreRegistry(defs, oreMaterials, enabledOreMaterials)
         }
     }
 }

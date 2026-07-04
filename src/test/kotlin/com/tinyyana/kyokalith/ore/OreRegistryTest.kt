@@ -16,7 +16,6 @@ class OreRegistryTest {
         config.set("ores.diamond.y_min", -64)
         config.set("ores.diamond.y_max", 16)
         config.set("ores.diamond.preferred_y", -59)
-        config.set("ores.diamond.exposed_density_multiplier", 0.65)
         config.set("ores.diamond.vein_size_min", 1)
         config.set("ores.diamond.vein_size_max", 8)
         config.set("ores.diamond.cell_chance", 0.018)
@@ -37,6 +36,17 @@ class OreRegistryTest {
         assertEquals(1, registry.enabled().size)
         assertTrue(registry.enabled().any { it.oreType == "diamond" })
         assertFalse(registry["ancient_debris"]!!.enabled)
+    }
+
+    @Test
+    fun `enabled ore material set excludes disabled ores`() {
+        val registry = OreRegistry.load(config().getConfigurationSection("ores")).getOrThrow()
+
+        assertTrue(registry.isOreMaterial("ANCIENT_DEBRIS"))
+        assertFalse(registry.isEnabledOreMaterial("ANCIENT_DEBRIS"))
+        assertTrue(registry.isEnabledOreMaterial("DIAMOND_ORE"))
+        assertTrue(registry.isEnabledOreMaterial("DEEPSLATE_DIAMOND_ORE"))
+        assertFalse(registry.isEnabledOreMaterial("STONE"))
     }
 
     @Test

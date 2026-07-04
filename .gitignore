@@ -9,6 +9,7 @@ build
 
 # IntelliJ
 out/
+bin/
 .idea
 *.iml
 # mpeltonen/sbt-idea plugin

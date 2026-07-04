@@ -4,187 +4,106 @@ import com.tinyyana.kyokalith.KyokalithPlugin
 import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.chunk.EpochedChunk
 import com.tinyyana.kyokalith.chunk.LocalPos
-import org.bukkit.Chunk
 import org.bukkit.Material
-import org.bukkit.NamespacedKey
-import org.bukkit.World
 import org.bukkit.block.Block
 import org.bukkit.block.BlockFace
-import org.bukkit.persistence.PersistentDataType
 
 /**
- * 單點曝露檢查與實體化。只在主執行緒呼叫;不做全區掃描。
+ * 曝露時決算(v0.4 誘餌模型,docs/KYOKALITH_SPEC.md §7/§9)。
+ *
+ * 原版世界生成的礦物保留在世界資料中當「誘餌」:透視看得到,但完全埋藏的誘餌在
+ * 首次曝露的那一刻才由決定性礦脈函數決算——f 命中換成真礦,未命中的誘餌換回基底石。
+ * 已曝露過的方塊(世界生成就露出的洞穴壁、先前決算過的斷面)永不改動,因此正常
+ * 玩家看得到的礦全部是真的,誘餌只會騙到隔著實心方塊偷看的透視。
+ *
+ * 全程沒有 chunk 掃描、沒有排程任務、沒有 ChunkLoadEvent 處理;只在主執行緒由
+ * 方塊消失事件觸發,每次事件的成本上限是「消失方塊數 × 6 鄰居」的常數工作。
  */
 class MaterializationService(private val plugin: KyokalithPlugin) {
-    private val activeScans = mutableSetOf<String>()
-    private val scannedKey = NamespacedKey(plugin, "chunk_scanned")
 
     /**
-     * 一個 chunk 只需完整掃描一次(生成期掃描或既有 chunk strip 遷移)。
-     * 沒有這個標記,chunk 每次 unload/reload(玩家移動造成的正常行為)都會重新全高度掃描,
-     * 不但违反 §9.5「禁止定期全區掃描」,還會把已經實體化的 Kyokalith 礦重新 strip 回石頭。
+     * removed:同一事件中消失(或被活塞搬離)的天然方塊,呼叫時機是移除生效之後,
+     * 這些座標當下已是空氣/流體。dirty 的 removed 座標(玩家放置過)不觸發決算:
+     * 它蓋住的東西在被蓋住之前必然已經曝露過,再挖開不能改變它——這就是
+     * 「玩家把看到的礦蓋起來、之後再挖開,礦不會消失」的保護。
      */
-    fun isScanned(chunk: Chunk): Boolean =
-        chunk.persistentDataContainer.get(scannedKey, PersistentDataType.BYTE) == 1.toByte()
-
-    private fun markScanned(chunk: Chunk) {
-        chunk.persistentDataContainer.set(scannedKey, PersistentDataType.BYTE, 1)
+    fun resolveRemoved(removed: Collection<Block>) {
+        if (removed.isEmpty()) return
+        val removedKeys = removed.mapTo(HashSet()) { PosKey(it.x, it.y, it.z) }
+        val visited = HashSet<PosKey>()
+        removed.forEach { origin ->
+            if (isDirty(origin)) return@forEach
+            NEIGHBORS.forEach { face ->
+                val neighbor = origin.getRelative(face)
+                val key = PosKey(neighbor.x, neighbor.y, neighbor.z)
+                if (key in removedKeys || !visited.add(key)) return@forEach
+                resolveIfNewlyExposed(neighbor, removedKeys)
+            }
+        }
     }
 
-    /** NatureRevive 再生後該 chunk 需要重新掃描一次,見 §13.2。 */
-    fun clearScanned(chunk: Chunk) {
-        chunk.persistentDataContainer.remove(scannedKey)
-    }
-
-    fun tryMaterialize(block: Block): Boolean {
-        val base = block.type
-        if (base !in BASE_BLOCKS) return false
-        if (plugin.oreRegistry.isOreMaterial(base.name)) return false
-        if (!isExposed(block)) return false
-
-        val coord = ChunkCoord(block.world.name, block.x.floorChunk(), block.z.floorChunk())
-        if (plugin.suspendedChunkStore.isSuspended(coord)) return false
-
-        val epoch = plugin.chunkEpochStore.get(coord)
-        val epoched = EpochedChunk(coord.world, coord.cx, coord.cz, epoch)
-        val local = LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
-        if (plugin.dirtyPositionStore.isDirty(epoched, local)) return false
-
-        val result = plugin.oreVeinResolver.resolve(block.world.name, epoch, block.x, block.y, block.z, base.name)
-            ?: return false
-        val material = Material.matchMaterial(result.material) ?: return false
-        block.setType(material, false)
-        return true
-    }
-
+    /** 玩家放置/機制生成的座標永不實體化,之後挖開它也不觸發鄰居決算(§10)。 */
     fun markDirty(block: Block) {
-        if (block.type !in BASE_BLOCKS && !plugin.oreRegistry.isOreMaterial(block.type.name)) return
-        val coord = ChunkCoord(block.world.name, block.x.floorChunk(), block.z.floorChunk())
+        plugin.dirtyPositionStore.markDirty(epochedChunk(block), localPos(block))
+    }
+
+    /**
+     * 只決算「本次事件才首次曝露」的方塊:它的每一個透明面都必須指向本次 removed
+     * 集合。已有其他透明面 = 事件前就看得到(世界生成曝露或先前決算過),一律不動,
+     * 避免可見牆面憑空長礦或真礦被抹掉。
+     */
+    private fun resolveIfNewlyExposed(block: Block, removedKeys: Set<PosKey>) {
+        val current = block.type
+        val decoyBase = if (current in BASE_BLOCKS) null else {
+            if (!plugin.oreRegistry.isEnabledOreMaterial(current.name)) return
+            nativeOreBase(current) ?: return
+        }
+        val base = decoyBase ?: current
+        if (!newlyExposed(block, removedKeys)) return
+
+        val coord = ChunkCoord(block.world.name, Math.floorDiv(block.x, 16), Math.floorDiv(block.z, 16))
+        if (plugin.suspendedChunkStore.isSuspended(coord)) return
+        if (isDirty(block)) return
+
         val epoch = plugin.chunkEpochStore.get(coord)
-        plugin.dirtyPositionStore.markDirty(
-            EpochedChunk(coord.world, coord.cx, coord.cz, epoch),
-            LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16)),
-        )
+        val resolved = plugin.oreVeinResolver.resolve(
+            block.world.name,
+            epoch,
+            block.x,
+            block.y,
+            block.z,
+            base.name,
+            block.world.environment.name,
+        )?.material?.let { Material.matchMaterial(it) }
+        // 石頭且 f 未命中 → 維持原樣;誘餌礦且 f 未命中 → 換回基底石
+        val target = resolved ?: (decoyBase ?: return)
+        if (target != current) block.setType(target, false)
     }
 
-    fun checkNeighbors(block: Block) {
-        NEIGHBORS.forEach { tryMaterialize(block.getRelative(it)) }
-    }
-
-    fun scanGeneratedChunk(chunk: Chunk) {
-        scanChunkBatched(chunk, materialize = true, scanNeighborShells = true)
-    }
-
-    fun stripExistingChunk(chunk: Chunk) {
-        scanChunkBatched(chunk, materialize = false, scanNeighborShells = false)
-    }
-
-    fun stripLoadedChunks() {
-        if (!plugin.config.getBoolean("materialization.strip_existing_chunks", true)) return
-        plugin.server.worlds.forEach { world ->
-            world.loadedChunks.forEach { if (!isScanned(it)) stripExistingChunk(it) }
+    private fun newlyExposed(block: Block, removedKeys: Set<PosKey>): Boolean {
+        var opened = 0
+        NEIGHBORS.forEach { face ->
+            val neighbor = block.getRelative(face)
+            if (neighbor.type in EXPOSURE_BLOCKS) {
+                if (PosKey(neighbor.x, neighbor.y, neighbor.z) !in removedKeys) return false
+                opened++
+            }
         }
+        return opened > 0
     }
 
-    fun stripNativeOre(block: Block): Boolean {
-        if (!plugin.oreRegistry.isOreMaterial(block.type.name)) return false
-        val base = nativeOreBase(block.type) ?: return false
-        block.setType(base, false)
-        return true
+    private fun isDirty(block: Block): Boolean =
+        plugin.dirtyPositionStore.isDirty(epochedChunk(block), localPos(block))
+
+    private fun epochedChunk(block: Block): EpochedChunk {
+        val coord = ChunkCoord(block.world.name, Math.floorDiv(block.x, 16), Math.floorDiv(block.z, 16))
+        return EpochedChunk(coord.world, coord.cx, coord.cz, plugin.chunkEpochStore.get(coord))
     }
 
-    private fun scanChunkBatched(chunk: Chunk, materialize: Boolean, scanNeighborShells: Boolean) {
-        if (isScanned(chunk)) return
-        val world = chunk.world
-        val scanKey = "${world.uid}:${chunk.x}:${chunk.z}:$materialize:$scanNeighborShells"
-        if (!activeScans.add(scanKey)) return
+    private fun localPos(block: Block): LocalPos =
+        LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
 
-        val minY = world.minHeight
-        val maxY = world.maxHeight
-        val bodyTotal = 16 * 16 * (maxY - minY)
-        val shells = if (scanNeighborShells) loadedShells(chunk) else emptyList()
-        val shellSize = 16 * (maxY - minY)
-        val blockBudget = plugin.config.getInt("materialization.scan_blocks_per_tick", 1024).coerceAtLeast(256)
-        var bodyIndex = 0
-        var shellIndex = 0
-        var taskId = -1
-
-        taskId = plugin.server.scheduler.scheduleSyncRepeatingTask(plugin, Runnable {
-            if (!world.isChunkLoaded(chunk.x, chunk.z)) {
-                activeScans.remove(scanKey)
-                plugin.server.scheduler.cancelTask(taskId)
-                return@Runnable
-            }
-
-            var processed = 0
-            while (processed < blockBudget && bodyIndex < bodyTotal) {
-                val y = minY + bodyIndex / 256
-                val inLayer = bodyIndex % 256
-                val x = inLayer % 16
-                val z = inLayer / 16
-                processScannedBlock(chunk.getBlock(x, y, z), materialize)
-                bodyIndex++
-                processed++
-            }
-
-            val shellTotal = shells.size * shellSize
-            while (processed < blockBudget && bodyIndex >= bodyTotal && shellIndex < shellTotal) {
-                blockForShell(shells[shellIndex / shellSize], shellIndex % shellSize, minY)
-                    ?.let { tryMaterialize(it) }
-                shellIndex++
-                processed++
-            }
-
-            if (bodyIndex >= bodyTotal && shellIndex >= shellTotal) {
-                markScanned(chunk)
-                activeScans.remove(scanKey)
-                plugin.server.scheduler.cancelTask(taskId)
-            }
-        }, 1L, 1L)
-    }
-
-    private fun processScannedBlock(block: Block, materialize: Boolean) {
-        stripNativeOre(block)
-        if (materialize) tryMaterialize(block)
-    }
-
-    private fun loadedShells(chunk: Chunk): List<ShellScan> {
-        val world = chunk.world
-        return listOfNotNull(
-            shellIfLoaded(world, chunk.x - 1, chunk.z, shellX = 15, shellZ = null),
-            shellIfLoaded(world, chunk.x + 1, chunk.z, shellX = 0, shellZ = null),
-            shellIfLoaded(world, chunk.x, chunk.z - 1, shellX = null, shellZ = 15),
-            shellIfLoaded(world, chunk.x, chunk.z + 1, shellX = null, shellZ = 0),
-        )
-    }
-
-    private fun shellIfLoaded(
-        world: World,
-        chunkX: Int,
-        chunkZ: Int,
-        shellX: Int?,
-        shellZ: Int?,
-    ): ShellScan? {
-        if (!world.isChunkLoaded(chunkX, chunkZ)) return null
-        return ShellScan(world.getChunkAt(chunkX, chunkZ), shellX, shellZ)
-    }
-
-    private fun blockForShell(shell: ShellScan, index: Int, minY: Int): Block? {
-        val chunk = shell.chunk
-        if (!chunk.world.isChunkLoaded(chunk.x, chunk.z)) return null
-        val y = minY + index / 16
-        val offset = index % 16
-        return if (shell.shellX != null) {
-            chunk.getBlock(shell.shellX, y, offset)
-        } else {
-            chunk.getBlock(offset, y, shell.shellZ!!)
-        }
-    }
-
-    private fun isExposed(block: Block): Boolean =
-        NEIGHBORS.any { block.getRelative(it).type in EXPOSURE_BLOCKS }
-
-    private fun Int.floorChunk(): Int = Math.floorDiv(this, 16)
+    private data class PosKey(val x: Int, val y: Int, val z: Int)
 
     companion object {
         val BASE_BLOCKS: Set<Material> = setOf(Material.STONE, Material.DEEPSLATE, Material.NETHERRACK)
@@ -216,10 +135,4 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             }
         }
     }
-
-    private data class ShellScan(
-        val chunk: Chunk,
-        val shellX: Int?,
-        val shellZ: Int?,
-    )
 }

@@ -5,6 +5,7 @@ import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.chunk.EpochedChunk
 import com.tinyyana.kyokalith.chunk.LocalPos
 import com.tinyyana.kyokalith.eligibility.EligiblePlacedOre
+import com.tinyyana.kyokalith.materialization.MaterializationService
 import org.bukkit.Material
 import org.bukkit.World
 import org.bukkit.command.Command
@@ -32,8 +33,9 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
             "giveeligible" -> giveEligible(sender, args.drop(1))
             "suspend" -> suspend(sender, args.drop(1))
             "resume" -> resume(sender, args.drop(1))
+            "resolve" -> resolve(sender, args.drop(1))
             else -> {
-                sender.sendMessage("§e用法:/kyo stats | inspect <x> <y> <z> | preview [radius] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz>")
+                sender.sendMessage("§e用法:/kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world]")
                 true
             }
         }
@@ -52,9 +54,9 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
                 "§7placed eligible ores:§f$placedEligibleCount",
                 "§7suspended chunks:§f$suspendedCount",
                 "§7礦脈函數/preview/sample:§a可用",
-                "§7事件驅動曝露實體化:§a可用",
+                "§7事件驅動曝露決算(誘餌模型,無 chunk 掃描):§a可用",
                 "§7eligible token/d20 drops:§a可用",
-                "§7世界生成抹礦 datapack:§a已提供(需部署到 world/datapacks)",
+                "§7誘餌層:§f原版世界生成礦(不抹礦、無 datapack)",
                 "§7NatureRevive epoch 整合:§f${if (plugin.natureReviveBridgeActive) "§aactive" else "§cinactive"}",
             ).joinToString("\n"),
         )
@@ -62,9 +64,8 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
     }
 
     private fun inspect(sender: CommandSender, args: List<String>): Boolean {
-        val player = sender as? Player ?: return playerOnly(sender)
-        if (args.size != 3) {
-            sender.sendMessage("§e用法:/kyo inspect <x> <y> <z>")
+        if (args.size !in 3..4) {
+            sender.sendMessage("§e用法:/kyo inspect <x> <y> <z> [world]")
             return true
         }
         val x = args[0].toIntOrNull()
@@ -74,14 +75,16 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
             sender.sendMessage("§c座標必須是整數")
             return true
         }
-        val world = player.world
+        val world = resolveWorld(sender, args.getOrNull(3)) ?: return true
         val block = world.getBlockAt(x, y, z)
         val coord = chunkCoord(world, x, z)
         val epoch = plugin.chunkEpochStore.get(coord)
         val epoched = EpochedChunk(world.name, coord.cx, coord.cz, epoch)
         val local = LocalPos(Math.floorMod(x, 16), y, Math.floorMod(z, 16))
         val placed = plugin.eligiblePlacedOreStore.find(world.name, x, y, z)
-        val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, block.type.name)
+        // 已是礦物的座標要用基底材質問 f,否則永遠 none,無法確認天然 eligible 的 f-match
+        val baseName = MaterializationService.nativeOreBase(block.type)?.name ?: block.type.name
+        val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, baseName, world.environment.name)
 
         sender.sendMessage(
             listOf(
@@ -97,10 +100,24 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
         return true
     }
 
+    /** `/kyo preview [radius]`(玩家,以自身為中心)或 `/kyo preview <radius> <x> <y> <z> [world]`(主控台可用)。 */
     private fun preview(sender: CommandSender, args: List<String>): Boolean {
-        val player = sender as? Player ?: return playerOnly(sender)
         val radius = parseRadius(sender, args.firstOrNull(), 8) ?: return true
-        val hits = collectHits(player, radius, limit = 12)
+        val center = if (args.size >= 4) {
+            val x = args[1].toIntOrNull()
+            val y = args[2].toIntOrNull()
+            val z = args[3].toIntOrNull()
+            if (x == null || y == null || z == null) {
+                sender.sendMessage("§c座標必須是整數")
+                return true
+            }
+            val world = resolveWorld(sender, args.getOrNull(4)) ?: return true
+            world.getBlockAt(x, y, z)
+        } else {
+            val player = sender as? Player ?: return playerOnly(sender)
+            player.location.block
+        }
+        val hits = collectHits(center, radius, limit = 12)
         sender.sendMessage("§b[Kyokalith] preview 半徑 $radius 命中 ${hits.total} 格")
         hits.examples.forEach { sender.sendMessage("§7- §f${it.x} ${it.y} ${it.z} §7${it.oreType}->${it.material}") }
         if (hits.total > hits.examples.size) sender.sendMessage("§7...其餘 ${hits.total - hits.examples.size} 格省略")
@@ -114,7 +131,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
             return true
         }
         val radius = parseRadius(sender, args.getOrNull(1), 8) ?: return true
-        val hits = collectHits(player, radius, limit = 0)
+        val hits = collectHits(player.location.block, radius, limit = 0)
         sender.sendMessage("§b[Kyokalith] sample volume 半徑 $radius:§f ${hits.total} / ${hits.scanned} 格命中")
         return true
     }
@@ -238,9 +255,43 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
         return true
     }
 
-    private fun collectHits(player: Player, radius: Int, limit: Int): HitSummary {
-        val center = player.location.block
-        val world = player.world
+    /**
+     * 手動把某座標當成「剛剛消失的方塊」重跑一次首次曝露決算,走與事件監聽完全相同的
+     * `MaterializationService.resolveRemoved` 路徑。用途:維運排錯(懷疑漏了曝露事件時,
+     * 對已挖開的座標補決算;決定性 f 保證冪等),以及無真人玩家環境下的行為驗證。
+     */
+    private fun resolve(sender: CommandSender, args: List<String>): Boolean {
+        if (args.size !in 3..4) {
+            sender.sendMessage("§e用法:/kyo resolve <x> <y> <z> [world](座標應是已挖開的空氣/流體格)")
+            return true
+        }
+        val x = args[0].toIntOrNull()
+        val y = args[1].toIntOrNull()
+        val z = args[2].toIntOrNull()
+        if (x == null || y == null || z == null) {
+            sender.sendMessage("§c座標必須是整數")
+            return true
+        }
+        val world = resolveWorld(sender, args.getOrNull(3)) ?: return true
+        plugin.materializationService.resolveRemoved(listOf(world.getBlockAt(x, y, z)))
+        sender.sendMessage("§a已把 $x $y $z 視為消失方塊,對其鄰居重跑首次曝露決算")
+        return true
+    }
+
+    /** 主控台/RCON 沒有自身世界:優先用明確參數,其次玩家所在世界,最後伺服器第一個世界。 */
+    private fun resolveWorld(sender: CommandSender, name: String?): World? {
+        if (name != null) {
+            val world = plugin.server.getWorld(name)
+            if (world == null) sender.sendMessage("§c未知世界:$name")
+            return world
+        }
+        val world = (sender as? Player)?.world ?: plugin.server.worlds.firstOrNull()
+        if (world == null) sender.sendMessage("§c找不到任何世界")
+        return world
+    }
+
+    private fun collectHits(center: org.bukkit.block.Block, radius: Int, limit: Int): HitSummary {
+        val world = center.world
         var scanned = 0
         var total = 0
         val examples = mutableListOf<HitExample>()
@@ -254,7 +305,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor {
                     val block = world.getBlockAt(x, y, z)
                     scanned++
                     val epoch = plugin.chunkEpochStore.get(coord)
-                    val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, block.type.name) ?: continue
+                    val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, block.type.name, world.environment.name) ?: continue
                     total++
                     if (examples.size < limit) {
                         examples += HitExample(x, y, z, result.oreType, result.material)

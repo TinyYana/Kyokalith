@@ -6,11 +6,12 @@ data class OreDefinition(
     val enabled: Boolean,
     val stoneMaterial: String?,
     val deepslateMaterial: String?,
+    /** Bukkit `World.Environment` name (NORMAL/NETHER/THE_END) this ore is allowed to resolve in. */
+    val dimension: String,
     val yMin: Int,
     val yMax: Int,
     val preferredY: Int,
     val density: Double,
-    val exposedDensityMultiplier: Double,
     val veinSizeMin: Int,
     val veinSizeMax: Int,
     val cellChance: Double,

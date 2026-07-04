@@ -1,7 +1,0 @@
-{
-  "pack": {
-    "description": "Kyokalith: strip vanilla economic ore generation.",
-    "min_format": [107, 1],
-    "max_format": [107, 1]
-  }
-}

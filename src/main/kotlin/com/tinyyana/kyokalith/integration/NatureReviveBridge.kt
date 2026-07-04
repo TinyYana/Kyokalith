@@ -3,17 +3,13 @@ package com.tinyyana.kyokalith.integration
 import com.tinyyana.kyokalith.KyokalithPlugin
 import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.chunk.EpochedChunk
-import com.tinyyana.kyokalith.materialization.MaterializationService
 import org.bukkit.Chunk
 import org.bukkit.event.Event
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.plugin.EventExecutor
 
-class NatureReviveBridge(
-    private val plugin: KyokalithPlugin,
-    private val materialization: MaterializationService,
-) {
+class NatureReviveBridge(private val plugin: KyokalithPlugin) {
     fun register(): Boolean {
         val eventClass = runCatching {
             Class.forName("engineer.skyouo.plugins.naturerevive.spigot.events.ChunkRegenEvent")
@@ -55,7 +51,6 @@ class NatureReviveBridge(
         } finally {
             if (completed) plugin.suspendedChunkStore.resume(coord)
         }
-        materialization.clearScanned(chunk)
-        materialization.scanGeneratedChunk(chunk)
+        // 再生後不需要重掃:regen 會放回原版礦(= 新一輪誘餌),epoch+1 已讓 f 重洗
     }
 }

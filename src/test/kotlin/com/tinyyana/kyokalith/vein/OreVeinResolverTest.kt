@@ -25,12 +25,38 @@ class OreVeinResolverTest {
         return OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow()
     }
 
+    /**
+     * MAX_VEIN_RADIUS 上限後,單一固定座標不再保證命中(半徑上限後的球體只佔 cell 一小部分),
+     * 不能再靠超大 vein_size 保證命中。改成在一個 cell 內掃描找出第一個真實命中座標,
+     * 命中一定存在(cell_chance=1.0、density=1.0、preferred_y=0 使 y=0 附近 weight≈1)。
+     */
+    private fun findHitCoordinate(
+        resolver: OreVeinResolver,
+        epoch: Int = 0,
+        baseMaterial: String = "STONE",
+        dimension: String = "NORMAL",
+    ): Triple<Int, Int, Int> {
+        // "cell 是否啟用" 由 cell 座標的雜湊決定,不是每個 cell 都會 active(cell_chance 只是機率上限)。
+        // 掃描範圍涵蓋多個相鄰 cell(而不只是一個),確保至少有一個 active cell 可以命中。
+        for (x in 0 until 32) {
+            for (y in -32 until 32) {
+                for (z in 0 until 32) {
+                    if (resolver.resolve("world", epoch, x, y, z, baseMaterial, dimension) != null) {
+                        return Triple(x, y, z)
+                    }
+                }
+            }
+        }
+        error("測試設定下掃描範圍內找不到任何命中,vein 幾何或測試假設可能不成立")
+    }
+
     @Test
     fun `same coordinate resolves deterministically`() {
         val resolver = OreVeinResolver("salt", registry())
+        val (x, y, z) = findHitCoordinate(resolver)
 
-        val first = resolver.resolve("world", 0, 10, 20, 30, "STONE")
-        val second = resolver.resolve("world", 0, 10, 20, 30, "STONE")
+        val first = resolver.resolve("world", 0, x, y, z, "STONE")
+        val second = resolver.resolve("world", 0, x, y, z, "STONE")
 
         assertNotNull(first)
         assertEquals(first, second)
@@ -40,8 +66,10 @@ class OreVeinResolverTest {
     fun `epoch participates in the vein function`() {
         val resolver = OreVeinResolver("salt", registry())
 
-        val epoch0 = resolver.resolve("world", 0, 10, 20, 30, "STONE")
-        val epoch1 = resolver.resolve("world", 1, 10, 20, 30, "STONE")
+        val (x0, y0, z0) = findHitCoordinate(resolver, epoch = 0)
+        val (x1, y1, z1) = findHitCoordinate(resolver, epoch = 1)
+        val epoch0 = resolver.resolve("world", 0, x0, y0, z0, "STONE")
+        val epoch1 = resolver.resolve("world", 1, x1, y1, z1, "STONE")
 
         assertNotEquals(epoch0?.veinId, epoch1?.veinId)
     }
@@ -49,10 +77,11 @@ class OreVeinResolverTest {
     @Test
     fun `base material controls ore material`() {
         val resolver = OreVeinResolver("salt", registry())
+        val (x, y, z) = findHitCoordinate(resolver)
 
-        assertEquals("IRON_ORE", resolver.resolve("world", 0, 10, 20, 30, "STONE")?.material)
-        assertEquals("DEEPSLATE_IRON_ORE", resolver.resolve("world", 0, 10, 20, 30, "DEEPSLATE")?.material)
-        assertNull(resolver.resolve("world", 0, 10, 20, 30, "DIRT"))
+        assertEquals("IRON_ORE", resolver.resolve("world", 0, x, y, z, "STONE")?.material)
+        assertEquals("DEEPSLATE_IRON_ORE", resolver.resolve("world", 0, x, y, z, "DEEPSLATE")?.material)
+        assertNull(resolver.resolve("world", 0, x, y, z, "DIRT"))
     }
 
     @Test
@@ -86,6 +115,26 @@ class OreVeinResolverTest {
     }
 
     @Test
+    fun `nether-only ore never resolves when queried from the overworld`() {
+        val config = YamlConfiguration()
+        config.set("ores.nether_quartz.enabled", true)
+        config.set("ores.nether_quartz.dimension", "NETHER")
+        config.set("ores.nether_quartz.materials.stone", "NETHER_QUARTZ_ORE")
+        config.set("ores.nether_quartz.y_min", -64)
+        config.set("ores.nether_quartz.y_max", 320)
+        config.set("ores.nether_quartz.preferred_y", 0)
+        config.set("ores.nether_quartz.density", 1.0)
+        config.set("ores.nether_quartz.vein_size_min", 32)
+        config.set("ores.nether_quartz.vein_size_max", 32)
+        config.set("ores.nether_quartz.cell_chance", 1.0)
+        val resolver = OreVeinResolver("salt", OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow())
+        val (x, y, z) = findHitCoordinate(resolver, dimension = "NETHER")
+
+        assertNull(resolver.resolve("world", 0, x, y, z, "STONE", dimension = "NORMAL"))
+        assertNotNull(resolver.resolve("world", 0, x, y, z, "STONE", dimension = "NETHER"))
+    }
+
+    @Test
     fun `deepslate does not fall back to stone material`() {
         val config = YamlConfiguration()
         config.set("ores.nether_quartz.enabled", true)
@@ -98,8 +147,9 @@ class OreVeinResolverTest {
         config.set("ores.nether_quartz.vein_size_max", 32)
         config.set("ores.nether_quartz.cell_chance", 1.0)
         val resolver = OreVeinResolver("salt", OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow())
+        val (x, y, z) = findHitCoordinate(resolver, baseMaterial = "NETHERRACK")
 
-        assertNull(resolver.resolve("world", 0, 10, 20, 30, "DEEPSLATE"))
-        assertEquals("NETHER_QUARTZ_ORE", resolver.resolve("world", 0, 10, 20, 30, "NETHERRACK")?.material)
+        assertNull(resolver.resolve("world", 0, x, y, z, "DEEPSLATE"))
+        assertEquals("NETHER_QUARTZ_ORE", resolver.resolve("world", 0, x, y, z, "NETHERRACK")?.material)
     }
 }
