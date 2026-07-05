@@ -27,6 +27,14 @@ tasks {
         dependsOn(shadowJar)
     }
 
+    jar {
+        archiveClassifier.set("thin")
+    }
+
+    shadowJar {
+        archiveClassifier.set("")
+    }
+
     runServer {
         minecraftVersion(libs.versions.minecraft.get())
         jvmArgs("-Xms2G", "-Xmx2G")
