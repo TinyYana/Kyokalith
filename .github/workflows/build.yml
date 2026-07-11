@@ -1,0 +1,50 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Action 版本說明:每一顆都取「第一個真正跑在 Node 24 的 major」,不是最新 major。
+# GitHub 已停止在 runner 上支援 Node 20(舊版會被強制降轉並印 deprecation 警告)。
+# upload-artifact 要 v6(v5 只是「預備支援」Node 24,預設仍跑 Node 20)。
+# 硬性需求是 runner >= 2.327.1(ubuntu-latest 已滿足)。
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # build 同時跑單元測試,其中包含 DocsCoverageTest:
+      # plugin.yml 宣告的指令與權限,必須出現在 README.md / docs/*.md 裡。
+      # 加了功能沒寫文件,這一步就會紅。
+      - name: Build (compile + unit tests + docs coverage + jar)
+        run: |
+          chmod +x gradlew
+          ./gradlew build
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Kyokalith-test-report
+          path: build/reports/tests/test
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Kyokalith-jar
+          path: |
+            build/libs/*.jar
+            !build/libs/*-thin.jar
+          if-no-files-found: error

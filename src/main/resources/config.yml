@@ -7,8 +7,8 @@ database:
   file: kyokalith.db
   dirty_flush_interval_ticks: 40
 
-# dimension 對應 Bukkit World.Environment(NORMAL/NETHER/THE_END),省略預設 NORMAL。
-# 未設定會導致該礦種在所有維度都可能命中——下界限定礦種務必明確標 NETHER。
+# dimension 對應 Bukkit World.Environment(NORMAL/NETHER/THE_END),省略預設 NORMAL,
+# 且是精確比對——所以省略 = 只在主世界命中,下界礦種務必明確標 NETHER。
 # enabled: false 的礦種 Kyokalith 完全不管:誘餌保持原版、挖掘走原版、不觸發檢定。
 ores:
   coal:
