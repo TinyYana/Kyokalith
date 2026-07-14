@@ -7,7 +7,7 @@ import org.bukkit.plugin.java.JavaPlugin
 import java.util.UUID
 
 /**
- * Silk Touch 挖出的 eligible 礦物 ItemStack 標記(docs/KYOKALITH_SPEC.md §11.3)。
+ * Silk Touch 挖出的 eligible 礦物 ItemStack 標記(token 生命週期見 docs/API.md)。
  * Phase 1 只提供標記/讀取/清除工具;實際掛在 BlockDropItemEvent 上屬於後續挖掘生命週期階段。
  */
 class EligibleOrePdc(plugin: JavaPlugin) {

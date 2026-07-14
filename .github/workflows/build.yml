@@ -15,6 +15,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 只有 tag push 的 release step 用到;PR 的 token 本來就是唯讀
     steps:
       - uses: actions/checkout@v5
 
@@ -48,3 +50,17 @@ jobs:
             build/libs/*.jar
             !build/libs/*-thin.jar
           if-no-files-found: error
+
+      # push tag vX.Y.Z → 自動發 GitHub Release 附 jar。
+      # 先驗 tag 與 gradle.properties 的 version 一致,避免 release 的檔名/plugin.yml 版本跟 tag 對不上。
+      - name: Create GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep '^version=' gradle.properties | cut -d= -f2)
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match gradle.properties version $VERSION"; exit 1
+          fi
+          JAR=$(ls build/libs/*.jar | grep -v -- '-thin')
+          gh release create "$GITHUB_REF_NAME" "$JAR" --title "Kyokalith $GITHUB_REF_NAME" --generate-notes

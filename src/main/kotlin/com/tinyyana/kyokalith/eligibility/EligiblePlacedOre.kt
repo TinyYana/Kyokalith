@@ -2,7 +2,7 @@ package com.tinyyana.kyokalith.eligibility
 
 import java.util.UUID
 
-/** PLACED_BLOCK 狀態的 eligible ore token(docs/KYOKALITH_SPEC.md §11.4)。 */
+/** PLACED_BLOCK 狀態的 eligible ore token(token 生命週期見 docs/API.md)。 */
 data class EligiblePlacedOre(
     val world: String,
     val x: Int,

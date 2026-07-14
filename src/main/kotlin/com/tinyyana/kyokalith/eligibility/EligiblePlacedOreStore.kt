@@ -5,7 +5,7 @@ import java.sql.ResultSet
 import java.util.UUID
 
 /**
- * eligible_placed_ores:玩家放置的 qualified 礦物座標(docs/KYOKALITH_SPEC.md §11.4)。
+ * eligible_placed_ores:玩家放置的 qualified 礦物座標(token 生命週期見 docs/API.md)。
  * 座標唯一(world, x, y, z)——同座標重複放置會覆蓋前一筆紀錄。
  */
 class EligiblePlacedOreStore(private val db: KyokalithDatabase) {

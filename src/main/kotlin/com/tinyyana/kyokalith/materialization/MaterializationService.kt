@@ -9,7 +9,7 @@ import org.bukkit.block.Block
 import org.bukkit.block.BlockFace
 
 /**
- * 曝露時決算(v0.4 誘餌模型,docs/KYOKALITH_SPEC.md §7/§9)。
+ * 曝露時決算(誘餌模型)。
  *
  * 原版世界生成的礦物保留在世界資料中當「誘餌」:透視看得到,但完全埋藏的誘餌在
  * 首次曝露的那一刻才由決定性礦脈函數決算——f 命中換成真礦,未命中的誘餌換回基底石。

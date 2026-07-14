@@ -1,0 +1,115 @@
+TinyYana Universal Software License (TYUSL)
+Version 1.0
+Date: July 7, 2025
+
+Copyright (c) 2026 TinyYana. All rights reserved except as expressly
+granted under this License.
+
+===============================================================================
+
+中文條款（Chinese Terms）
+
+本授權條款適用於本儲存庫所包含及隨附散布的軟體、原始碼、文件與其衍生作品（以下簡稱「本軟體」）。除非個別檔案另有明確標示，否則使用、複製、修改或散布本軟體，即表示您同意遵守本條款。
+
+一、使用與修改權限
+
+在遵守本條款的前提下，您可以：
+
+1. 使用、複製及修改本軟體；
+2. 整合、散布本軟體或其修改版本；
+3. 將本軟體作為個人、非營利或商業專案及系統的一部分。
+
+二、商業使用限制
+
+您可以在商業環境中使用本軟體，例如整合進企業內部系統，或作為較大產品中的輔助功能。
+
+但未經作者事先書面同意，不得直接以本軟體、本軟體的主要功能、服務或介面作為營利產品、付費服務或主要營收來源的核心構成。
+
+以下行為需要事先取得作者書面授權，包括但不限於：
+
+1. 直接對本軟體收費，或將本軟體本身提供為付費、訂閱制或代管服務；
+2. 將本軟體或其主要功能重新封裝後銷售、出租或授權；
+3. 將本軟體作為營利產品的核心模組，且未與該產品的其他價值明確區隔。
+
+三、著作權、標示與散布
+
+1. 本軟體的著作權由 TinyYana 所有。
+2. 散布本軟體或其修改版本時，必須保留本授權條款及原始著作權聲明。
+3. 您可以在修改版本中加入自己的著作權聲明，但不得宣稱原始版本由您創作，也不得以附加條款減少本條款要求保留的權利與聲明。
+
+四、免責與責任限制
+
+本軟體按「現狀」提供，不附帶任何明示或默示保證，包括但不限於適售性、特定目的適用性、不侵權、可用性或商業價值之保證。
+
+在法律允許的最大範圍內，作者不對因使用、無法使用或散布本軟體所生的任何直接、間接、附帶、特殊、懲罰性或衍生損害負責。
+
+五、終止
+
+若您違反本條款，依本條款取得的授權將自動終止。停止違反行為並不會自動恢復授權；如需恢復，應取得作者書面同意。
+
+六、授權版本與變更
+
+作者可以發布本授權條款的新版本。您取得某一版本的本軟體後，該次取得所適用的授權條款不會因日後發布的新版本而被溯及變更；重新取得或更新本軟體時，應遵守當時隨附的授權版本。
+
+七、語言
+
+本授權條款提供中文與英文版本。若兩個版本的解釋有不一致之處，以中文版本為準。
+
+===============================================================================
+
+English Terms
+
+This License applies to the software, source code, documentation, and derivative works contained in or distributed with this repository (collectively, the "Software"). Unless an individual file expressly states otherwise, using, copying, modifying, or distributing the Software constitutes acceptance of these terms.
+
+1. Use and Modification
+
+Subject to this License, you may:
+
+1. use, copy, and modify the Software;
+2. integrate and distribute the Software or modified versions; and
+3. include the Software in personal, non-commercial, or commercial projects and systems.
+
+2. Commercial Use Limitation
+
+You may use the Software in a commercial environment, including within internal business systems or as an ancillary component of a larger product.
+
+However, without the author's prior written permission, you may not use the Software, its primary functions, services, or interface as the core component of a monetized product, paid service, or primary source of revenue.
+
+Activities requiring prior written permission include, without limitation:
+
+1. charging directly for the Software or offering the Software itself as a paid, subscription, or hosted service;
+2. repackaging and selling, leasing, or licensing the Software or its primary functions; or
+3. making the Software a core module of a monetized product without clearly separating it from the product's other value.
+
+3. Copyright, Attribution, and Distribution
+
+1. Copyright in the Software is owned by TinyYana.
+2. Any distribution of the Software or a modified version must retain this License and the original copyright notice.
+3. You may add your own copyright notice to a modified version, but you may not claim authorship of the original version or impose additional terms that remove the rights and notices required by this License.
+
+4. Disclaimer and Limitation of Liability
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, AVAILABILITY, OR COMMERCIAL VALUE.
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE AUTHOR SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, PUNITIVE, OR CONSEQUENTIAL DAMAGES ARISING FROM THE USE, INABILITY TO USE, OR DISTRIBUTION OF THE SOFTWARE.
+
+5. Termination
+
+The rights granted under this License terminate automatically if you violate its terms. Ending the violation does not automatically reinstate the License; reinstatement requires the author's written permission.
+
+6. License Versions and Changes
+
+The author may publish new versions of this License. The terms applicable when you obtained a particular version of the Software will not be changed retroactively by a later license version. If you obtain or update the Software again, the license version distributed with that copy applies.
+
+7. Language
+
+This License is provided in Chinese and English. If the two versions are interpreted inconsistently, the Chinese version controls.
+
+===============================================================================
+
+聯絡作者 / Contact the Author
+
+如有授權需求或商業用途諮詢，請透過以下 Email 與 TinyYana 聯繫。
+For licensing inquiries or commercial-use consultation, contact TinyYana at:
+
+Email: admin@tinyyana.com

@@ -1,7 +1,7 @@
 [versions]
-kotlin = "2.4.20-Beta1"
+kotlin = "2.4.0"
 
-paper-api = "26.2.build.+"
+spigot-api = "26.2-R0.1-SNAPSHOT"
 minecraft = "26.2"
 sqlite-jdbc = "3.49.1.0"
 
@@ -9,7 +9,8 @@ shadow = "9.4.3"
 run-task = "3.0.2"
 
 [libraries]
-paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+# 編譯基準刻意用 spigot-api 而非 paper-api:保證不誤用 Paper 專屬 API,讓「Spigot 相容」是編譯期事實
+spigot-api = { module = "org.spigotmc:spigot-api", version.ref = "spigot-api" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 

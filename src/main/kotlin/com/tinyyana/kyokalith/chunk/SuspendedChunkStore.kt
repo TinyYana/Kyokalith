@@ -5,7 +5,7 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * suspended chunk:dirty flush 失敗等異常時暫停該 chunk 的實體化(docs/KYOKALITH_SPEC.md §10.4)。
+ * suspended chunk:dirty flush 失敗等異常時暫停該 chunk 的實體化,寧可少換礦也不冒重骰風險。
  * Phase 1 只提供儲存層;實際在 dirty flush 失敗時呼叫 suspend() 屬於後續事件整合階段。
  */
 class SuspendedChunkStore(private val db: KyokalithDatabase) {

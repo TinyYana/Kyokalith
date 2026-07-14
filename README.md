@@ -1,116 +1,128 @@
 # Kyokalith
 
-**不動世界生成的反 X-Ray 礦層。** 原版怎麼生就怎麼生,不改資料包、不清礦、不掃區塊——被實心方塊完全包住的礦,一律當成**誘餌**:X-Ray / freecam / 種子地圖看得到,但那顆方塊的真假**要等它第一次被挖開露出來的瞬間才決定**。
+[繁體中文](README.zh-TW.md)
 
-作弊者照著螢幕上的紅點挖過去,挖到的是石頭;老實玩家在洞穴壁上看到的礦,永遠是真的。
+**Anti-X-Ray that never touches world generation.** Vanilla ores generate exactly as they always have — no packet obfuscation, no wiping-and-regenerating ores, no chunk scanning. Any ore fully enclosed by solid blocks is treated as a **decoy**: X-Ray, freecam, and seed-map tools all see it, but whether that block is *real* is only decided **the moment it is first exposed by mining**.
 
-> 這是 Lycohinya 伺服器的自製插件,但**反 X-Ray 這部分是通用的**——任何 Paper 26.2 伺服器單獨裝 Kyokalith 都能用,不需要其他 Lyco\* 插件。第二個功能(挖礦檢定令牌)才是給 LycohinyaCore 用的,沒裝 Core 就只是靜靜地不發事件。
+A cheater tunnels straight toward an ore they can see through the walls — and hits its base block; an honest player looking at an ore in a cave wall is always looking at the real thing.
 
-## 它到底怎麼運作
+> Built for (and battle-tested on) the Lycohinya survival server. The anti-X-Ray core is fully generic — any Spigot/Paper 26.2 server can run Kyokalith standalone. The second feature (eligible-ore check tokens via `OreCheckTriggerEvent`) is an optional integration point for other plugins; with no listener installed it simply stays silent.
 
-傳統反 X-Ray 走兩條路,兩條都有代價:封包混淆(騙不過 freecam、吃 CPU)、或是清空礦再自己重生(要掃區塊,TPS 會死)。Kyokalith 走第三條:
+## How it actually works
 
-1. **世界生成完全不動。** 原版的礦還在原地。生成時就已經露在外面的礦(洞穴壁、峽谷面)是**真的**,永遠不會被改。
-2. **完全被包住的礦是誘餌。** 它存在於世界檔裡,X-Ray 看得到,但跟「這裡有沒有礦」無關。
-3. **唯一的觸發點是「方塊消失」。** 玩家挖掉、爆炸、燒掉、活塞推走——事件發生後**延後一 tick**,只看被移除方塊的**六個面鄰居**。
-4. **只處理「這次才第一次露出來」的鄰居。** 一個方塊如果本來就有另一個面通風,代表玩家早就看得到它了,碰都不碰。這條規則同時擋掉兩件事:礦不會在玩家正盯著的牆上憑空長出來,已經看到的真礦也不會被抹掉。
-5. **決定真假。** 用確定性函數 `f(salt, world, epoch, x, y, z, 基礎方塊, 維度)`:命中 → 誘餌變成真礦(或普通石頭**變成**礦);沒命中 → 誘餌變回石頭。因為方塊還沒送到客戶端,老實玩家眼中什麼都沒發生。
+Traditional anti-X-Ray takes one of two roads, each with a cost: packet obfuscation (defeated by freecam, burns CPU) or wiping ores and regenerating them yourself (requires chunk scanning, kills TPS). Kyokalith takes a third road:
 
-每次事件的成本上限是常數:`被移除的方塊數 × 6`。**沒有掃描、沒有排程掃描任務、沒有 `ChunkLoadEvent` 工作。**
+1. **World generation is untouched.** Vanilla ores stay where they generated. Ores that were already exposed at generation time (cave walls, ravine faces) are **real** and will never be altered.
+2. **Fully buried ores are decoys.** They exist in the world file and X-Ray sees them, but they say nothing about where ore actually is.
+3. **The only trigger is "a block disappeared".** Player mining, explosions, fire, pistons — one tick after the event, Kyokalith looks at the **six face neighbors** of each removed block.
+4. **Only neighbors exposed for the first time are processed.** A block that already had another open face was already visible — it is never touched. This one rule prevents both failure modes: ore never pops into existence on a wall a player is staring at, and real ore a player has already seen is never wiped.
+5. **Reality is decided.** A deterministic function `f(salt, world, epoch, x, y, z, base block, dimension)` decides: hit → the decoy becomes real ore (or a plain base block **becomes** ore); miss → the decoy reverts to its base block (stone / deepslate / netherrack). The block hasn't been sent to any client yet, so honest players see nothing happen at all.
 
-> **這是 v0.4 的模型。** v0.3 以前用「資料包清礦 + 掃描區塊重生」,121 個 forceload 區塊就把 TPS 壓到 18.9;v0.4 把掃描整套刪掉之後回到 20.1。**任何「順便掃一下區塊」的想法在這個插件裡都是紅線。**
+Per-event cost is bounded by a constant: `removed blocks × 6`. **No scanning, no scheduled scan tasks, no `ChunkLoadEvent` work.**
 
-### 蓋起來的礦不會被重骰
+> The current decoy model replaced an earlier scan-based approach (pre-v1.0 "v0.3"), which wiped ores via datapack and regenerated them by scanning chunks — 121 force-loaded chunks dragged TPS down to 18.9. Deleting the entire scanning pipeline brought it back to 20.1. **Any "let's just scan a few chunks while we're at it" idea is a hard red line in this plugin.**
 
-玩家放下的方塊(以及雪/冰生成、實體放置、活塞推到的目的地)會被標記為 **dirty**。dirty 的方塊永遠不會被材質化,而且**挖掉 dirty 方塊也不會去解析它的鄰居**。
+### Covered-up ore never gets re-rolled
 
-理由:一個玩家放的方塊底下如果藏著東西,那東西在被蓋住之前一定已經露出來過了。這條規則同時擋掉「把誘餌蓋起來、再挖開來跳過解析」的漏洞,也保證「把真礦蓋起來、晚點再挖開,它還在」。活塞把最後一層遮蔽拉走也算「移除」,不能拿活塞偷看未決定的誘餌。
+Blocks placed by players (plus snow/ice formation, entity placement, and piston destinations) are marked **dirty**. Dirty blocks are never materialized, and **removing a dirty block does not resolve its neighbors**.
 
-## 需求
+Rationale: if something is hiding under a player-placed block, it must have been exposed before it was covered. This rule simultaneously blocks the "cover a decoy, dig it back up to skip resolution" exploit and guarantees "cover real ore, dig it up later, it's still there."  A piston pulling away the last covering block counts as removal too — you can't peek at unresolved decoys with pistons.
+
+## Requirements
 
 | | |
 |---|---|
-| 伺服器 | **Paper 26.2**(用 Paper API,不保證純 Spigot) |
+| Server | **Spigot or Paper 26.2** (compiled against the Spigot API; runs in production on Paper) |
 | Java | **25** |
-| 硬相依 | 無 |
-| 軟相依 | NatureRevive(有裝才會接區塊重生事件,反射載入) |
+| Hard dependencies | None |
+| Soft dependencies | NatureRevive (chunk-regeneration bridge, loaded via reflection only if present) |
 
-Kotlin stdlib 與 SQLite 驅動由 Paper 的 library loader 在啟動時下載,**不 shade 進 jar**。
+The Kotlin stdlib and SQLite driver are downloaded at startup by the Bukkit library loader — **not shaded into the jar**.
 
-## 安裝
+## Installation
 
-1. 把 `Kyokalith-<版本>.jar` 丟進 `plugins/`,啟動。
-2. 預設 `config.yml` 會生成,11 種礦(含地獄礦)全部啟用,直接可用。
-3. 第一次啟動會在 `plugins/Kyokalith/kyokalith.db` 產生一組隨機 `salt`。
+1. Drop `Kyokalith-<version>.jar` into `plugins/` and start the server.
+2. A default `config.yml` is generated with all 11 ore types (including nether ores) enabled — it works out of the box.
+3. First startup creates `plugins/Kyokalith/kyokalith.db` containing a random `salt`.
 
-> ⚠ **`salt` 產生後絕對不要刪 DB 或重置它。** salt 是「真礦位置與世界種子無關」的來源;重置等於把全世界所有還沒挖開的礦脈重骰一次。
+> ⚠ **Never delete the DB or reset the `salt` once generated.** The salt is what decouples real ore positions from the world seed; resetting it re-rolls every unexposed vein in the entire world.
 
-## 指令
+## Upgrading
 
-`/kyokalith`(別名 `/kyo`)。**所有子指令都需要 `kyokalith.admin`。**
+Config upgrades are automatic: new keys are merged into your existing `config.yml` on startup with their default values; your existing values are never overwritten. Notably, `locale` defaults to `en` — set `locale: zh_TW` (or your own lang file) if you want something else.
 
-| 子指令 | 參數 | 做什麼 | 誰能用 |
+## Commands
+
+`/kyokalith` (alias `/kyo`). **Every subcommand requires `kyokalith.admin`.**
+
+| Subcommand | Args | What it does | Who |
 |---|---|---|---|
-| `stats` | – | 礦種數、eligible 方塊數、暫停區塊數、NatureRevive 橋接狀態 | 主控台可 |
-| `inspect` | `<x> <y> <z> [world]` | 傾印該座標的 epoch、方塊、dirty/暫停旗標、礦脈函數結果 | 主控台可 |
-| `preview` | `[半徑]` 或 `<半徑> <x> <y> <z> [world]` | 暴力掃一個立方體,回報命中數與最多 12 個範例座標 | 短式限玩家 |
-| `sample` | `volume [半徑]` | 同上,只回報 `命中 / 掃描` | 限玩家 |
-| `resolve` | `<x> <y> <z> [world]` | 對該座標重跑一次首次曝光解析(`f` 是確定性的,重跑安全) | 主控台可 |
-| `suspend` | `<cx> <cz> <理由...>` | 暫停該區塊的材質化 | 限玩家 |
-| `resume` | `<cx> <cz>` | 解除暫停 | 限玩家 |
-| `markeligible` | `[x y z]` | QA 工具:把方塊標 dirty 並寫入一筆 eligible 令牌 | 限玩家 |
-| `giveeligible` | `<玩家> <礦種> <1-64>` | QA 工具:發一疊帶 PDC 令牌的礦方塊 | 主控台可 |
+| `stats` | – | Ore type count, eligible block count, suspended chunks, NatureRevive bridge state | Console OK |
+| `inspect` | `<x> <y> <z> [world]` | Dump epoch, block, dirty/suspended flags, and vein-function result for a coordinate | Console OK |
+| `preview` | `[radius]` or `<radius> <x> <y> <z> [world]` | Brute-force scan a cube, report hits and up to 12 example coordinates | Short form player-only |
+| `sample` | `volume [radius]` | Same scan, reports `hits / scanned` only | Player-only |
+| `resolve` | `<x> <y> <z> [world]` | Re-run first-exposure resolution for a coordinate (`f` is deterministic, safe to re-run) | Console OK |
+| `suspend` | `<cx> <cz> <reason...>` | Suspend materialization in a chunk | Player-only |
+| `resume` | `<cx> <cz>` | Lift a suspension | Player-only |
+| `markeligible` | `[x y z]` | QA tool: mark a block dirty and write an eligible token for it | Player-only |
+| `giveeligible` | `<player> <oreType> <1-64>` | QA tool: give a stack of ore blocks carrying PDC tokens | Console OK |
 
-`preview` / `sample` 的半徑夾在 `1..24`——這兩個是**刻意保留的暴力掃描例外**,管理員專用,不在熱路徑上。
+The `preview` / `sample` radius is clamped to `1..24` — these two are **deliberate brute-force exceptions**, admin-only and never on a hot path.
 
-## 權限
+## Permissions
 
-| 節點 | 預設 | 效果 |
+| Node | Default | Effect |
 |---|---|---|
-| `kyokalith.admin` | `op` | 所有 `/kyo` 子指令 |
-| `kyokalith.bypass` | `false` | 持有者挖礦不消耗檢定令牌、不觸發 `OreCheckTriggerEvent`。**注意:誘餌解析照常跑**,這個權限只跳過檢定路徑 |
+| `kyokalith.admin` | `op` | All `/kyo` subcommands |
+| `kyokalith.bypass` | `false` | Holder's mining consumes no check token and fires no `OreCheckTriggerEvent`. **Note: decoy resolution still runs** — this only skips the check path |
 
-非生存模式(創造/旁觀/冒險)也不會消耗令牌。
+Non-survival modes (creative/spectator/adventure) never consume tokens either.
 
-## 設定
+## Configuration
 
-`config.yml` 只有兩塊:`database`(檔名、dirty 寫回間隔)與 `ores`(資料驅動的礦種定義,加一種礦不用改程式)。
+`config.yml` has three blocks: `locale`, `database` (file name, dirty write-back interval), and `ores` (data-driven ore definitions — adding an ore type requires no code).
 
-最常被動到的是礦的 `cell_chance` / `density` / `preferred_y`——**這三個直接等於伺服器經濟的水龍頭**。完整欄位說明、計算公式與紅線在 **[docs/CONFIG.md](docs/CONFIG.md)**。
+The knobs you'll touch most are each ore's `cell_chance` / `density` / `preferred_y` — **these three are literally your server economy's faucet**. Full field reference, the hit-probability formula, and the red lines live in **[docs/CONFIG.md](docs/CONFIG.md)**.
 
-沒有 `/kyo reload`,設定只在 `onEnable` 讀一次。
+There is no `/kyo reload`; config is read once in `onEnable`.
 
-## 給開發者
+### Messages / languages
 
-Kyokalith 對外只有**一個整合點**:`OreCheckTriggerEvent`——玩家在生存模式挖掉一顆「Kyokalith 自己產生/追蹤過」的礦時同步觸發,可取消,`drops` 可改寫。
+Admin-command output is fully customizable. Bundled locales: `en`, `zh_TW`. Set `locale` in `config.yml`, then edit the files under `plugins/Kyokalith/lang/` — keys you delete fall back to the built-in text. To add your own language, copy `lang/en.yml` to `lang/<name>.yml`, translate, and set `locale: <name>`.
 
-管理員給的礦、WorldEdit 貼的礦、商店買的礦**沒有令牌**,不會觸發。絲綢之觸會把令牌搬到 ItemStack 上(PDC),重新放下會搬進 DB,所以一顆礦可以交易、搬運、再挖,但**只會燒掉一次檢定**。
+## For developers
+
+Kyokalith exposes exactly **one** integration point: `OreCheckTriggerEvent` — fired synchronously when a survival-mode player mines an ore that Kyokalith itself produced or tracked. It is cancellable and its `drops` list is rewritable.
+
+Admin-given ores, WorldEdit-pasted ores, and shop-bought ores carry **no token** and never fire the event. Silk Touch moves the token onto the ItemStack (PDC); placing the block moves it into the DB — so one ore can be traded, moved, and re-mined, but **burns exactly one check**.
 
 ```kotlin
 @EventHandler
 fun onOreCheck(event: OreCheckTriggerEvent) {
-    if ((1..20).random() < 15) return          // 檢定失敗:不動 drops = 保留原版掉落
+    if ((1..20).random() < 15) return          // failed check: leave drops alone = vanilla drops
     val bonus = event.drops.firstOrNull()?.clone() ?: return
-    event.drops.add(bonus)                     // 檢定成功:多掉一份
+    event.drops.add(bonus)                     // passed check: one extra drop
 }
 ```
 
-介面契約、欄位、掉落改寫的精確語意、以及「取消 ≠ 不掉東西」這個反直覺點,見 **[docs/API.md](docs/API.md)**。
+The event contract, fields, exact drop-rewrite semantics, and the counter-intuitive "cancel ≠ no drops" rule are in **[docs/API.md](docs/API.md)**.
 
-## 建置
+## Building
 
 ```bash
-./gradlew build      # 編譯 + 單元測試 + 出 jar
-./gradlew test       # 只跑單元測試(礦脈函數、註冊表、各 store)
-./gradlew runServer  # 本機 Paper 26.2 測試伺服器
+./gradlew build      # compile + unit tests + jar
+./gradlew test       # unit tests only (vein function, registry, stores, messages)
+./gradlew runServer  # local Paper 26.2 test server
 ```
 
-`plugin.yml` 的 `libraries:` 裡的 Kotlin 版本**必須跟 `libs.versions.toml` 一致**,不然編譯用的 stdlib 跟執行期載入的不是同一份。
+The Kotlin version in `plugin.yml`'s `libraries:` **must match `gradle/libs.versions.toml`**, otherwise the stdlib you compile against and the one loaded at runtime are different builds.
 
-## 資料
+## Data
 
-單一 SQLite 檔 `plugins/Kyokalith/kyokalith.db`(WAL)。存 `salt`、每區塊的 `epoch`、dirty 位置、已放置的 eligible 礦、暫停中的區塊。詳細 schema 見 [docs/API.md](docs/API.md#資料表)。
+A single SQLite file, `plugins/Kyokalith/kyokalith.db` (WAL). Stores the `salt`, per-chunk `epoch`s, dirty positions, placed eligible ores, and suspended chunks. Schema details in [docs/API.md](docs/API.md#tables).
 
-## 授權
+## License
+
+[TinyYana Universal Software License (TYUSL) 1.0](LICENSE) — free to use, modify, integrate, and redistribute, including on commercial servers; you may **not** sell the plugin itself or repackage it as a paid product/service without written permission.
 
 TinyYana · [tinyyana.com](https://tinyyana.com)

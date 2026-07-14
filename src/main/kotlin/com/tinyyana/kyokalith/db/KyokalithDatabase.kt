@@ -7,7 +7,7 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * Schema per docs/KYOKALITH_SPEC.md §14. WAL 由 §10.4 要求(dirty positions 是安全關鍵資料)。
+ * Schema 見 docs/API.md「資料表」。WAL 是硬需求:dirty positions 是安全關鍵資料,不能因程序中斷整批遺失。
  */
 class KyokalithDatabase(private val file: File) {
 

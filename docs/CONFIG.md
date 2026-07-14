@@ -1,32 +1,44 @@
-# Kyokalith 設定參考
+# Kyokalith configuration reference
 
-`plugins/Kyokalith/config.yml`。**沒有 `/kyo reload`**——設定只在 `onEnable` 讀一次,改完要重開伺服器。
+[繁體中文](CONFIG.zh-TW.md)
 
-設定驗證是 **fail-fast**:任何一個礦定義不合法(沒有材質、`y_min > y_max`、`cell_chance` 超出 0..1、`ores:` 整段空的),**插件會直接自我停用**,而不是帶著壞設定跑。看到 `Kyokalith` 沒 enable,先看 log 第一行。
+`plugins/Kyokalith/config.yml`. **There is no `/kyo reload`** — config is read once in `onEnable`; restart the server after changes.
+
+Config validation is **fail-fast**: if any single ore definition is invalid (no material, `y_min > y_max`, `cell_chance` outside 0..1, an empty `ores:` block), **the plugin disables itself** rather than running with a broken config. If Kyokalith didn't enable, read the first line of the log.
+
+---
+
+## `locale`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `locale` | String | `en` | Language of admin-command output. Bundled: `en`, `zh_TW` |
+
+Language files live in `plugins/Kyokalith/lang/<locale>.yml` and override the built-in text key-by-key — keys you delete fall back to the bundled defaults (and any key missing from a locale falls back to English). To add a language, copy `lang/en.yml` to `lang/<name>.yml`, translate the values, and set `locale: <name>`. Color codes use `&`; `{placeholders}` are filled in by the plugin.
 
 ---
 
 ## `database`
 
-| Key | 型別 | 預設 | 說明 |
+| Key | Type | Default | Description |
 |---|---|---|---|
-| `database.file` | String | `kyokalith.db` | SQLite 檔名,相對於 `plugins/Kyokalith/` |
-| `database.dirty_flush_interval_ticks` | Long | `40` | dirty 位置寫回 DB 的間隔,單位 tick(40 = 2 秒) |
+| `database.file` | String | `kyokalith.db` | SQLite file name, relative to `plugins/Kyokalith/` |
+| `database.dirty_flush_interval_ticks` | Long | `40` | Interval for writing dirty positions back to the DB, in ticks (40 = 2 s) |
 
-> 🔴 **`dirty_flush_interval_ticks` 是紅線,兩邊都不能亂調。**
+> 🔴 **`dirty_flush_interval_ticks` is a red line in both directions.**
 >
-> 寫回任務跑在**同步排程**上,每次 flush 對每個待寫區塊開一條新的 JDBC 連線做 `INSERT OR REPLACE`(沒有連線池)。
+> The write-back task runs on the **sync scheduler**; each flush opens a fresh JDBC connection per pending chunk and does `INSERT OR REPLACE` (no connection pool).
 >
-> - **調太小(例如 `1`)**:等於每 tick 在主執行緒上寫 SQLite。
-> - **調太大**:當機時遺失的 dirty 位置變多——而遺失 dirty 旗標**是正確性/漏洞問題**,不只是資料掉了:被玩家蓋住的方塊會重新變成「可首次曝光解析」,蓋起來再挖開的漏洞就回來了。
+> - **Too small (e.g. `1`)**: you are now writing SQLite on the main thread every tick.
+> - **Too large**: more dirty positions are lost on a crash — and losing dirty flags **is a correctness/exploit problem**, not just data loss: blocks a player covered up become "first-exposure resolvable" again, reopening the cover-and-dig exploit.
 >
-> 預設 40 是兩邊之間的平衡點,除非你知道自己在做什麼,不要動。
+> The default 40 is the balance point. Don't touch it unless you know what you're doing.
 
 ---
 
 ## `ores`
 
-資料驅動。加一種礦、拿掉一種礦、改深度分布,**都不用改程式碼**。
+Data-driven. Adding an ore type, removing one, or changing depth distribution **requires no code changes**.
 
 ```yaml
 ores:
@@ -45,74 +57,74 @@ ores:
     cell_chance: 0.06
 ```
 
-| Key | 型別 | 預設 | 說明 |
+| Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | Boolean | `true` | `false` = Kyokalith 完全無視這種礦:誘餌保持原版、挖掘保持原版、不發檢定事件 |
-| `materials.stone` | Material | 必填(至少一個) | 基礎方塊是 `STONE` **或 `NETHERRACK`** 時要生成的礦方塊 |
-| `materials.deepslate` | Material | – | 基礎方塊是 `DEEPSLATE` 時的礦方塊。**不會 fallback 到 `stone`**——沒設就是深板岩層不出這種礦 |
-| `dimension` | `NORMAL` / `NETHER` / `THE_END` | `NORMAL` | 只在這個維度解析。**地獄礦一定要明寫 `NETHER`** |
-| `y_min` / `y_max` | Int | `0` | 硬性範圍,超出永遠不解析 |
-| `preferred_y` | Int | `0` | 三角形權重的峰值:在 `preferred_y` 是 1.0,線性遞減到 `y_min`/`y_max` 較遠的那一端變成 0 |
-| `density` | Double | `1.0` | 乘在 `cell_chance` 上的倍率 |
-| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | 礦脈「大小」。實際球半徑 = `max(1, size / 2)`,**上限硬夾在 2** |
-| `cell_chance` | Double 0.0–1.0 | 必填 | 一個 16×16×16 的 cell 生出礦脈原點的機率(還沒乘 `density` 與 Y 權重) |
+| `enabled` | Boolean | `true` | `false` = Kyokalith ignores this ore entirely: decoys stay vanilla, mining stays vanilla, no check events |
+| `materials.stone` | Material | required (at least one) | Ore block to generate when the base block is `STONE` **or `NETHERRACK`** |
+| `materials.deepslate` | Material | – | Ore block when the base is `DEEPSLATE`. **No fallback to `stone`** — unset means this ore never appears in deepslate layers |
+| `dimension` | `NORMAL` / `NETHER` / `THE_END` | `NORMAL` | Only resolves in this dimension. **Nether ores must explicitly say `NETHER`** |
+| `y_min` / `y_max` | Int | `0` | Hard range; outside it, never resolves |
+| `preferred_y` | Int | `0` | Peak of the triangular weight: 1.0 at `preferred_y`, falling linearly toward `y_min`/`y_max` |
+| `density` | Double | `1.0` | Multiplier applied to `cell_chance` |
+| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | Vein "size". Actual sphere radius = `max(1, size / 2)`, **hard-clamped at 2** |
+| `cell_chance` | Double 0.0–1.0 | required | Probability that a 16×16×16 cell spawns a vein origin (before `density` and the Y weight) |
 
-### 實際命中機率
+### Effective hit probability
 
 ```
-啟用機率 = clamp(cell_chance × density × yWeight(y), 0, 1)
+activation = clamp(cell_chance × density × yWeight(y), 0, 1)
 ```
 
-`yWeight` 是三角形:`preferred_y` 處為 1.0,往 `y_min` / `y_max` 兩端線性掉到 0。所以**把 `preferred_y` 設在範圍正中間跟設在邊緣,分布形狀完全不同**——邊緣的話,一半的高度區間權重會很低。
+`yWeight` is triangular: 1.0 at `preferred_y`, falling linearly to 0 at `y_min` / `y_max`. So **putting `preferred_y` in the middle of the range vs. at its edge produces completely different distributions** — at the edge, half the height range gets very low weight.
 
-### 🔴 紅線
+### 🔴 Red lines
 
-**`vein_size_max` 超過 ~5 是沒有作用的。** 程式裡 `MAX_VEIN_RADIUS = 2`,把球體硬夾在約 33 個方塊。
+**`vein_size_max` beyond ~5 does nothing.** The code has `MAX_VEIN_RADIUS = 2`, hard-clamping the sphere at roughly 33 blocks.
 
-這個上限是 v0.4 修「同一種礦無限延伸」bug 的補丁:當時 `半徑 = vein_size_max / 2 = 5`,算出來是 ~500 個方塊的球,玩家挖到一條就等於挖到一整片。**不要為了「讓礦脈大一點」把它拿掉。** 想要更密就調 `cell_chance` / `density`,不要調脈大小。
+That clamp is the fix for an "one ore type extends forever" bug: with `radius = vein_size_max / 2 = 5` the sphere is ~500 blocks — mining one vein meant mining a whole field. **Do not remove it to "make veins bigger."** Want more ore? Raise `cell_chance` / `density`, not vein size.
 
-**`dimension` 沒設 = 只在主世界。** (舊版 config 的註解說「不設 = 所有維度都會命中」,那是錯的——程式預設 `NORMAL` 並做精確比對。)
+**Unset `dimension` = overworld only.** (An older config comment claimed "unset = matches all dimensions"; that was wrong — the code defaults to `NORMAL` and matches exactly.)
 
-**`cell_chance` / `density` 直接等於伺服器的礦產水龍頭。** 設計目標是:玩家挖隧道(碰到的都是誘餌)感受到的礦密度,要跟原版在洞穴壁上看到的密度差不多。改這兩個數字之前先想清楚你要的是哪一種經濟。
+**`cell_chance` / `density` are literally your server's ore faucet.** The design target: the ore density a player experiences while tunneling (everything they hit is a decoy) should feel like the density of vanilla ore seen on cave walls. Think about which economy you want before touching these two numbers.
 
-**`salt` 不在 config 裡,而且不能重置。** 它在 DB 的 `meta` 表,第一次啟動時隨機生成。重置 salt = 全世界所有還沒挖開的礦脈重骰。
+**`salt` is not in the config, and must never be reset.** It lives in the DB `meta` table, generated randomly on first startup. Resetting the salt re-rolls every unexposed vein in the world.
 
 ---
 
-## 內建的礦
+## Bundled ores
 
-主世界:`coal` `iron` `copper` `gold` `redstone` `lapis` `diamond` `emerald`
-地獄(`dimension: NETHER`):`nether_quartz` `nether_gold` `ancient_debris`
+Overworld: `coal` `iron` `copper` `gold` `redstone` `lapis` `diamond` `emerald`
+Nether (`dimension: NETHER`): `nether_quartz` `nether_gold` `ancient_debris`
 
-全部 `enabled: true`、`density: 1.0`。
+All `enabled: true`, `density: 1.0`.
 
-## 加一種新礦
+## Adding a new ore
 
 ```yaml
 ores:
   my_custom_ore:
     enabled: true
     materials:
-      stone: EMERALD_ORE            # 基礎方塊是石頭/地獄岩時出這個
+      stone: EMERALD_ORE            # generated when the base is stone/netherrack
       deepslate: DEEPSLATE_EMERALD_ORE
     dimension: NORMAL
     y_min: -16
     y_max: 80
-    preferred_y: 32                 # 分布峰值
+    preferred_y: 32                 # distribution peak
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 3                # 記得:實際半徑上限是 2
+    vein_size_max: 3                # remember: actual radius caps at 2
     cell_chance: 0.02
 ```
 
-存檔、重開伺服器。`/kyo stats` 看礦種數有沒有 +1,`/kyo preview 16` 站在目標高度看命中密度合不合預期。
+Save, restart. Check `/kyo stats` for the ore count +1, then stand at the target height and run `/kyo preview 16` to sanity-check hit density.
 
-## 驗證改動
+## Verifying changes
 
 ```
-/kyo sample volume 24      # 站在目標 Y,看 命中/掃描 比例
-/kyo preview 16            # 看實際命中的座標與礦種
-/kyo inspect <x> <y> <z>   # 單點:epoch、dirty、礦脈函數結果
+/kyo sample volume 24      # stand at the target Y, check hit/scanned ratio
+/kyo preview 16            # see actual hit coordinates and ore types
+/kyo inspect <x> <y> <z>   # single point: epoch, dirty, vein-function result
 ```
 
-這三個是暴力掃描,半徑夾在 1..24,**只有管理員能用**,不要寫進自動化腳本裡反覆跑。
+These three are brute-force scans, radius clamped to 1..24, **admin-only** — don't put them in automation that runs repeatedly.

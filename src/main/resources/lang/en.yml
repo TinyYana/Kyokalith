@@ -1,0 +1,61 @@
+# Kyokalith messages — English
+# Color codes use &, placeholders like {x} are filled in by the plugin.
+# To customize: edit this file. Keys you delete fall back to the built-in text.
+# To add a language: copy this file to lang/<locale>.yml, translate the values,
+# then set `locale: <locale>` in config.yml.
+
+no-permission: "&cYou don't have permission"
+usage-root: "&eUsage: /kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world]"
+player-only: "&cThis command can only be used by a player"
+coords-not-int: "&cCoordinates must be integers"
+chunk-coords-not-int: "&cChunk coordinates must be integers"
+radius-range: "&cRadius must be within 1..24"
+unknown-world: "&cUnknown world: {name}"
+no-world: "&cNo world found"
+none: "none"
+
+stats-header: "&b[Kyokalith] status"
+stats-ores: "&7Ore types: &f{enabled} enabled / {total} total"
+stats-placed-eligible: "&7Placed eligible ores: &f{count}"
+stats-suspended: "&7Suspended chunks: &f{count}"
+stats-vein-tools: "&7Vein function / preview / sample: &aavailable"
+stats-exposure: "&7Event-driven exposure resolution (decoy model, no chunk scanning): &aavailable"
+stats-token-drops: "&7Eligible ore tokens / OreCheckTriggerEvent: &aavailable"
+stats-decoy-layer: "&7Decoy layer: &fvanilla world-gen ores (world data untouched)"
+stats-nature-revive: "&7NatureRevive epoch bridge: &f{state}"
+state-active: "&aactive"
+state-inactive: "&cinactive"
+
+usage-inspect: "&eUsage: /kyo inspect <x> <y> <z> [world]"
+inspect-header: "&b[Kyokalith] inspect {x} {y} {z}"
+inspect-world-epoch: "&7world/epoch: &f{world}/{epoch}"
+inspect-block: "&7block: &f{block}"
+inspect-dirty: "&7dirty: &f{dirty}"
+inspect-suspended: "&7suspended: &f{suspended}"
+inspect-placed: "&7placed eligible: &f{ore}"
+inspect-vein: "&7vein result: &f{result}"
+
+preview-hits: "&b[Kyokalith] preview radius {radius}: {total} block(s) matched"
+preview-example: "&7- &f{x} {y} {z} &7{ore}->{material}"
+preview-omitted: "&7...{count} more omitted"
+usage-sample: "&eUsage: /kyo sample volume [radius]"
+sample-result: "&b[Kyokalith] sample volume radius {radius}: &f{total} / {scanned} blocks matched"
+
+markeligible-look-at: "&cLook at an ore block within 8 blocks, or use /kyo markeligible <x> <y> <z>"
+usage-markeligible: "&eUsage: /kyo markeligible [x y z]"
+not-enabled-ore: "&c{material} is not an enabled Kyokalith ore type"
+marked-eligible: "&aMarked eligible: {ore} @ {x} {y} {z}"
+usage-giveeligible: "&eUsage: /kyo giveeligible <player> <oreType> <amount>"
+player-not-online: "&cPlayer is not online: {name}"
+unknown-ore: "&cUnknown or disabled ore type: {ore}"
+amount-range: "&cAmount must be within 1..64"
+ore-no-material: "&cOre type {ore} has no material to give"
+unknown-material: "&cUnknown Bukkit material: {material}"
+gave-eligible: "&aGave {player} {amount}x eligible {ore}"
+
+usage-suspend: "&eUsage: /kyo suspend <cx> <cz> <reason>"
+suspend-ok: "&aMaterialization suspended: {world} {cx} {cz}"
+usage-resume: "&eUsage: /kyo resume <cx> <cz>"
+resume-ok: "&aMaterialization resumed: {world} {cx} {cz}"
+usage-resolve: "&eUsage: /kyo resolve <x> <y> <z> [world] (the coordinate should be an already-exposed air/fluid block)"
+resolve-ok: "&aTreated {x} {y} {z} as a removed block and re-ran first-exposure resolution on its neighbors"

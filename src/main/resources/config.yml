@@ -1,15 +1,23 @@
-# Kyokalith 主設定(v0.4 誘餌模型)
-# 原版世界生成礦保留當誘餌,完全埋藏的座標在首次曝露時由決定性礦脈函數決算;
-# 沒有 chunk 掃描、沒有 datapack 抹礦。礦脈函數、eligible token、d20 bridge
-# 與 NatureRevive epoch 整合都在程式內實作。
+# Kyokalith main config (decoy model)
+# Vanilla world-gen ores are kept as decoys; a fully buried position is resolved by a
+# deterministic vein function at its first exposure. World generation is never touched
+# and nothing is scanned — the only block writes happen at the moment of first exposure.
+# The vein function, eligible ore tokens, OreCheckTriggerEvent and the NatureRevive
+# epoch bridge are all implemented in-plugin.
+
+# Locale for admin command output. Bundled: en, zh_TW.
+# Files under plugins/Kyokalith/lang/<locale>.yml override the bundled text key-by-key;
+# add your own lang/<name>.yml and point locale at it for a custom language.
+locale: en
 
 database:
   file: kyokalith.db
   dirty_flush_interval_ticks: 40
 
-# dimension 對應 Bukkit World.Environment(NORMAL/NETHER/THE_END),省略預設 NORMAL,
-# 且是精確比對——所以省略 = 只在主世界命中,下界礦種務必明確標 NETHER。
-# enabled: false 的礦種 Kyokalith 完全不管:誘餌保持原版、挖掘走原版、不觸發檢定。
+# dimension maps to Bukkit World.Environment (NORMAL/NETHER/THE_END). Omitted = NORMAL,
+# and the match is exact — nether ore types must explicitly say NETHER.
+# Ore types with enabled: false are fully ignored: decoys stay vanilla, mining is vanilla,
+# and no OreCheckTriggerEvent fires.
 ores:
   coal:
     enabled: true

@@ -11,22 +11,22 @@ softdepend: [ NatureRevive ]
 authors: [ TinyYana ]
 website: https://tinyyana.com
 
-# Paper library loader:runtime 依賴不 shade,啟動時從 Maven Central 下載
+# Bukkit library loader(Spigot/Paper 皆支援):runtime 依賴不 shade,啟動時從 Maven Central 下載
 # kotlin 版本必須跟 gradle/libs.versions.toml 的 kotlin 一致
 libraries:
-  - org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.20-Beta1
+  - org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.0
   - org.xerial:sqlite-jdbc:3.49.1.0
 
 commands:
   kyokalith:
-    description: Kyokalith 管理指令
+    description: Kyokalith admin commands
     aliases: [ kyo ]
     usage: /kyo stats
 
 permissions:
   kyokalith.admin:
-    description: 管理子指令(stats 等)
+    description: All /kyo admin subcommands
     default: op
   kyokalith.bypass:
-    description: 跳過 Kyokalith eligible ore 消耗流程
+    description: Holder's mining skips the eligible-ore token flow (decoy resolution still runs)
     default: false

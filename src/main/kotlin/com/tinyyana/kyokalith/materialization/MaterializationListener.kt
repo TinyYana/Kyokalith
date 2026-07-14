@@ -17,7 +17,7 @@ import org.bukkit.event.entity.EntityExplodeEvent
 
 /**
  * 把「天然方塊消失」的事件收斂到 MaterializationService.resolveRemoved,
- * 「方塊被放入/生成」的事件收斂到 markDirty(docs/KYOKALITH_SPEC.md §9.4/§10.2)。
+ * 「方塊被放入/生成」的事件收斂到 markDirty。
  * 決算一律排到下一 tick,讓移除先生效、透明狀態反映現實。
  */
 class MaterializationListener(

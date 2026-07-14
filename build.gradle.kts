@@ -6,14 +6,15 @@ plugins {
 
 repositories {
     mavenCentral()
+    maven("https://hub.spigotmc.org/nexus/content/repositories/snapshots/")
     maven("https://repo.papermc.io/repository/maven-public/")
 }
 
 dependencies {
-    compileOnly(libs.paper.api)
-    // stdlib 不 shade:runtime 由 plugin.yml 的 libraries(Paper library loader)提供,版本要與此一致
+    compileOnly(libs.spigot.api)
+    // stdlib 不 shade:runtime 由 plugin.yml 的 libraries(Bukkit library loader)提供,版本要與此一致
     compileOnly(libs.kotlin.stdlib)
-    testImplementation(libs.paper.api)
+    testImplementation(libs.spigot.api)
     testImplementation(libs.sqlite.jdbc)
     testImplementation(kotlin("test"))
 }

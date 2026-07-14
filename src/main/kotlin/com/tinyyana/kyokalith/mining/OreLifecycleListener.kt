@@ -59,7 +59,7 @@ class OreLifecycleListener(
         plugin.server.scheduler.runTask(plugin, Runnable {
             pendingBreaks.remove(key)?.let {
                 if (!it.silkTouch) {
-                    plugin.logger.fine("eligible ore break at $key had no BlockDropItemEvent; token consumed without d20 event")
+                    plugin.logger.fine("eligible ore break at $key had no BlockDropItemEvent; token consumed without OreCheckTriggerEvent")
                 }
                 consumePlacedIfNeeded(key, it)
             }

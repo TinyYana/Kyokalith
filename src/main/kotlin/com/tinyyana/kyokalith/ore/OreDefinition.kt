@@ -1,6 +1,6 @@
 package com.tinyyana.kyokalith.ore
 
-/** 單一礦種設定,對應 docs/KYOKALITH_SPEC.md §8.3/§17。 */
+/** 單一礦種設定,對應 config.yml 的 ores 區塊;欄位語意與紅線見 docs/CONFIG.md。 */
 data class OreDefinition(
     val oreType: String,
     val enabled: Boolean,

@@ -6,7 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 data class ChunkCoord(val world: String, val cx: Int, val cz: Int)
 
 /**
- * chunk epoch:每次 NatureRevive 再生一個 chunk,epoch +1(docs/KYOKALITH_SPEC.md §13.1)。
+ * chunk epoch:每次 NatureRevive 再生一個 chunk,epoch +1,舊 epoch 的紀錄自然作廢。
  * 決定性礦脈函數與 dirty positions 都以 (world, cx, cz, epoch) 為範圍鍵。
  */
 class ChunkEpochStore(private val db: KyokalithDatabase) {

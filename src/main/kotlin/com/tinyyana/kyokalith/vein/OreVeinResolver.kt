@@ -100,7 +100,7 @@ class OreVeinResolver(
         val ox = cellX * CELL_SIZE + positiveMod(mix(seed, 2), CELL_SIZE)
         val oy = cellY * CELL_SIZE + positiveMod(mix(seed, 3), CELL_SIZE)
         val oz = cellZ * CELL_SIZE + positiveMod(mix(seed, 4), CELL_SIZE)
-        // 硬上限,避免 config 誤設過大的 vein_size_max 時單一 cell 產生失控大礦脈(見 KYOKALITH_SPEC.md §19.1)。
+        // 硬上限,避免 config 誤設過大的 vein_size_max 時單一 cell 產生失控大礦脈。
         val radius = max(1, size / 2).coerceAtMost(MAX_VEIN_RADIUS)
         return CandidateVein(active, ox, oy, oz, radius, seed.toULong().toString(16))
     }

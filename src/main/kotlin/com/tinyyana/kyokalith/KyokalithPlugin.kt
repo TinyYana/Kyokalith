@@ -6,6 +6,7 @@ import com.tinyyana.kyokalith.chunk.SuspendedChunkStore
 import com.tinyyana.kyokalith.command.KyoCommand
 import com.tinyyana.kyokalith.db.KyokalithDatabase
 import com.tinyyana.kyokalith.eligibility.EligiblePlacedOreStore
+import com.tinyyana.kyokalith.i18n.Messages
 import com.tinyyana.kyokalith.integration.NatureReviveBridge
 import com.tinyyana.kyokalith.materialization.MaterializationListener
 import com.tinyyana.kyokalith.materialization.MaterializationService
@@ -39,6 +40,8 @@ class KyokalithPlugin : JavaPlugin() {
         private set
     lateinit var oreEligibilityService: OreEligibilityService
         private set
+    lateinit var messages: Messages
+        private set
     var natureReviveBridgeActive: Boolean = false
         private set
 
@@ -46,11 +49,13 @@ class KyokalithPlugin : JavaPlugin() {
 
     override fun onEnable() {
         mergeConfigDefaults()
+        Messages.saveBundledTemplates(this)
+        messages = Messages.load(this, config.getString("locale", Messages.DEFAULT_LOCALE)!!)
 
         OreRegistry.load(config.getConfigurationSection("ores")).fold(
             onSuccess = { oreRegistry = it },
             onFailure = { e ->
-                logger.severe("礦種設定載入失敗,停用插件:${e.message}")
+                logger.severe("Failed to load ore config, disabling plugin: ${e.message}")
                 server.pluginManager.disablePlugin(this)
                 return
             },
@@ -58,7 +63,7 @@ class KyokalithPlugin : JavaPlugin() {
 
         database = KyokalithDatabase(File(dataFolder, config.getString("database.file", "kyokalith.db")!!))
         runCatching { database.init() }.onFailure { e ->
-            logger.severe("資料庫初始化失敗,停用插件:${e.message}")
+            logger.severe("Database initialization failed, disabling plugin: ${e.message}")
             server.pluginManager.disablePlugin(this)
             return
         }
@@ -80,12 +85,17 @@ class KyokalithPlugin : JavaPlugin() {
             flushIntervalTicks,
         )
 
-        getCommand("kyokalith")?.setExecutor(KyoCommand(this))
+        KyoCommand(this).let { cmd ->
+            getCommand("kyokalith")?.apply {
+                setExecutor(cmd)
+                tabCompleter = cmd
+            }
+        }
         server.pluginManager.registerEvents(MaterializationListener(this, materializationService), this)
         server.pluginManager.registerEvents(OreLifecycleListener(this, oreEligibilityService), this)
         natureReviveBridgeActive = NatureReviveBridge(this).register()
         logger.info(
-            "Kyokalith ${pluginMeta.version} enabled(誘餌模型:事件驅動曝露決算、Silk/placed token 生命週期、OreCheckTriggerEvent 可用,無 chunk 掃描,NatureRevive bridge:${if (natureReviveBridgeActive) "active" else "inactive"})",
+            "Kyokalith ${description.version} enabled (decoy model: event-driven exposure resolution, silk/placed token lifecycle, OreCheckTriggerEvent available, no chunk scanning, NatureRevive bridge: ${if (natureReviveBridgeActive) "active" else "inactive"})",
         )
     }
 

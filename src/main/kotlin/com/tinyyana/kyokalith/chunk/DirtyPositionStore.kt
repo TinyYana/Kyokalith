@@ -9,9 +9,9 @@ data class LocalPos(val lx: Int, val y: Int, val lz: Int)
 data class EpochedChunk(val world: String, val cx: Int, val cz: Int, val epoch: Int)
 
 /**
- * dirty positions:被玩家或機制重新填入的天然座標,永不實體化礦物(docs/KYOKALITH_SPEC.md §10)。
+ * dirty positions:被玩家或機制重新填入的天然座標,永不實體化礦物。
  *
- * ponytail: 編碼用分號分隔字串(與 LycohinyaCore 的 BlockTraceCodec 同慣例),不用 BitSet/Roaring bitmap;
+ * ponytail: 編碼用分號分隔字串,不用 BitSet/Roaring bitmap;
  * 若日後 dirty 量體證明是效能瓶頸,再換更精簡的編碼。
  */
 class DirtyPositionStore(private val db: KyokalithDatabase) {
