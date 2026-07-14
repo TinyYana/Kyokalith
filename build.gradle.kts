@@ -53,7 +53,9 @@ tasks {
     }
 
     processResources {
-        val props = mapOf("version" to version, "description" to project.description)
+        val props = mapOf("version" to version.toString(), "description" to project.description.toString())
+        // 沒有這行,「只改 gradle.properties 版本號」不會讓本 task 失效,jar 內 plugin.yml 會留舊版本
+        inputs.properties(props)
         filesMatching("plugin.yml") {
             expand(props)
         }
