@@ -32,7 +32,8 @@ class MaterializationListener(
 
     @EventHandler(ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
-        // 所有玩家放置都標 dirty:除了防重骰,也讓「挖開自己放的方塊」不觸發鄰居決算,
+        // 所有玩家放置都標 dirty:放置的位置永不再進決算(f 是確定性的,防的不是重骰,
+        // 是「已被玩家看過/蓋過的方塊不該再被改動」),也讓「挖開自己放的方塊」不觸發鄰居決算,
         // 這是蓋住可見礦再挖開時礦不消失的保護的一半(另一半在 resolveRemoved 的 dirty 閘)
         materialization.markDirty(event.blockPlaced)
     }

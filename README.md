@@ -22,7 +22,7 @@ Per-event cost is bounded by a constant: `removed blocks × 6`. **No scanning, n
 
 > The current decoy model replaced an earlier scan-based approach (pre-v1.0 "v0.3"), which wiped ores via datapack and regenerated them by scanning chunks — 121 force-loaded chunks dragged TPS down to 18.9. Deleting the entire scanning pipeline brought it back to 20.1. **Any "let's just scan a few chunks while we're at it" idea is a hard red line in this plugin.**
 
-### Covered-up ore never gets re-rolled
+### Covered-up ore is never re-resolved
 
 Blocks placed by players (plus snow/ice formation, entity placement, and piston destinations) are marked **dirty**. Dirty blocks are never materialized, and **removing a dirty block does not resolve its neighbors**.
 

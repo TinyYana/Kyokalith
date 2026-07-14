@@ -29,7 +29,7 @@ A cheater tunnels straight to an ore they can see through the wall — and mines
 [*]Zero packet interception — no per-player obfuscation cost, no ProtocolLib
 [*]Zero chunk scanning — per-event cost is a constant: removed blocks × 6 neighbor checks, one tick later
 [*]World generation untouched; the only block writes happen at the moment of first exposure
-[*]Cover-up exploits handled: player-placed blocks are tracked as dirty and never re-rolled, and pistons can't peek
+[*]Cover-up exploits handled: player-placed blocks are tracked as dirty and never re-resolved, and pistons can't peek
 [*]Data-driven config: 11 vanilla ore types bundled (overworld + nether), add your own without code
 [*]Customizable messages with bundled English and Traditional Chinese locales
 [*]Integration API: [ICODE]OreCheckTriggerEvent[/ICODE] fires when a tracked ore is mined — build custom mining rewards on top (silently inactive if nothing listens)
