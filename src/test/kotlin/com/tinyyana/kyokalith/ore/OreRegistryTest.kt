@@ -50,6 +50,16 @@ class OreRegistryTest {
     }
 
     @Test
+    fun `oreTypeForEnabledMaterial finds enabled ores only`() {
+        val registry = OreRegistry.load(config().getConfigurationSection("ores")).getOrThrow()
+
+        assertEquals("diamond", registry.oreTypeForEnabledMaterial("DIAMOND_ORE"))
+        assertEquals("diamond", registry.oreTypeForEnabledMaterial("DEEPSLATE_DIAMOND_ORE"))
+        assertEquals(null, registry.oreTypeForEnabledMaterial("ANCIENT_DEBRIS")) // disabled ore type
+        assertEquals(null, registry.oreTypeForEnabledMaterial("STONE")) // not an ore material at all
+    }
+
+    @Test
     fun `rejects ore with no material and no y range`() {
         val config = YamlConfiguration()
         config.set("ores.broken.enabled", true)
