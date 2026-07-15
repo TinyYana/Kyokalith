@@ -3,6 +3,7 @@ package com.tinyyana.kyokalith.mining
 enum class EligibilitySource {
     NATURAL_BLOCK,
     PLACED_BLOCK,
+    WORLDGEN_EXPOSED,
 }
 
 data class EligibleOreBlock(

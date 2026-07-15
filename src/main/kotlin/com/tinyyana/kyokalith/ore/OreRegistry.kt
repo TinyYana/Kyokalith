@@ -20,6 +20,10 @@ class OreRegistry private constructor(
     /** 曝露決算只管已啟用礦種的誘餌;停用礦種完全維持原版行為。 */
     fun isEnabledOreMaterial(material: String): Boolean = material in enabledOreMaterials
 
+    /** 依方塊材質反查所屬礦種 id,只在已啟用礦種裡找。 */
+    fun oreTypeForEnabledMaterial(material: String): String? =
+        ores.values.firstOrNull { it.enabled && (it.stoneMaterial == material || it.deepslateMaterial == material) }?.oreType
+
     companion object {
         fun load(section: ConfigurationSection?): Result<OreRegistry> = runCatching {
             requireNotNull(section) { "config.yml 缺少 ores 節點" }

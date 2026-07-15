@@ -34,7 +34,7 @@ class OreCheckTriggerEvent(
     val fortuneLevel: Int,
     val drops: MutableList<ItemStack>,      // ← the only thing you may mutate
     val triggerSource: TriggerSource,       // PLAYER_BREAK
-    val eligibilitySource: EligibilitySource, // NATURAL_BLOCK / PLACED_BLOCK
+    val eligibilitySource: EligibilitySource, // NATURAL_BLOCK / PLACED_BLOCK / WORLDGEN_EXPOSED
 ) : Event(), Cancellable
 ```
 
@@ -85,8 +85,10 @@ This is the rule for "which ore blocks can trigger a check". **Not every ore blo
 |---|---|
 | Produced by Kyokalith's first-exposure resolution | ✅ yes (`NATURAL_BLOCK`) |
 | Silk Touch'd by a player, then placed back | ✅ yes (`PLACED_BLOCK`) |
-| Admin `/give`, WorldEdit paste, shop purchase | ❌ no |
-| Exposed on a cave wall at world generation | ❌ no (it's real ore, but Kyokalith didn't produce it) |
+| Any other real, currently-standing ore of an enabled type (e.g. exposed on a cave wall at world generation) | ✅ yes (`WORLDGEN_EXPOSED`) |
+| Admin `/give`, WorldEdit paste, shop purchase, or any other player-placed block | ❌ no (placing anything marks the position dirty) |
+
+`WORLDGEN_EXPOSED` exists because X-Ray gives zero information advantage on ore that was already visible without it — excluding it only starved reward plugins of legitimate check opportunities, not caught any cheater.
 
 **One ore burns exactly one check.** Lifecycle:
 

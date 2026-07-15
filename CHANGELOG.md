@@ -2,6 +2,11 @@
 
 All notable changes to Kyokalith are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/). The release CI extracts the matching `## [x.y.z]` section as the GitHub Release notes — a tag without a section here fails the release on purpose.
 
+## [1.1.0] - 2026-07-16
+
+### Changed
+- **Eligibility now includes already-exposed vanilla ore.** Previously, only ore Kyokalith itself materialized on first exposure (`NATURAL_BLOCK`) or moved through the placed-block token flow (`PLACED_BLOCK`) could fire `OreCheckTriggerEvent`. Ore that was already exposed at world generation — cave walls, ravine faces, i.e. most of what a player actually mines while exploring — almost never coincidentally matched the deterministic vein function, so it silently never fired the event. That exclusion caught zero cheaters (X-Ray gives no informational edge on ore that's already visible) while starving downstream reward plugins of legitimate check opportunities: a server measured **zero triggers across ~200 ores mined** in ordinary cave exploration. A new `EligibilitySource.WORLDGEN_EXPOSED` now covers this case — any real, currently-standing ore of an enabled type that isn't in a dirty position is eligible. Anti-X-Ray guarantees are unaffected: this only changes reward-check eligibility, not the decoy/materialization logic that decides what's real. See [docs/API.md](docs/API.md#eligibility-tokens).
+
 ## [1.0.0] - 2026-07-14
 
 First public release. The decoy-materialization model shipping here has been running in production on a live survival server for the past two weeks without incident.

@@ -34,7 +34,7 @@ class OreCheckTriggerEvent(
     val fortuneLevel: Int,
     val drops: MutableList<ItemStack>,      // ← 唯一可以改的東西
     val triggerSource: TriggerSource,       // PLAYER_BREAK
-    val eligibilitySource: EligibilitySource, // NATURAL_BLOCK / PLACED_BLOCK
+    val eligibilitySource: EligibilitySource, // NATURAL_BLOCK / PLACED_BLOCK / WORLDGEN_EXPOSED
 ) : Event(), Cancellable
 ```
 
@@ -85,8 +85,10 @@ class OreCheckListener : Listener {
 |---|---|
 | Kyokalith 首次曝光解析時產生的 | ✅ 有(`NATURAL_BLOCK`) |
 | 玩家用絲綢之觸挖走、再放回去的 | ✅ 有(`PLACED_BLOCK`) |
-| 管理員 `/give`、WorldEdit 貼的、商店買的 | ❌ 沒有 |
-| 原版生成時就露在洞穴壁上的 | ❌ 沒有(它是真礦,但不是 Kyokalith 產的) |
+| 其他任何目前站著的真礦、屬於已啟用礦種(例如世界生成時就露在洞穴壁上的) | ✅ 有(`WORLDGEN_EXPOSED`) |
+| 管理員 `/give`、WorldEdit 貼的、商店買的,或任何玩家放置的方塊 | ❌ 沒有(放置任何方塊都會把該座標標成 dirty) |
+
+`WORLDGEN_EXPOSED` 存在的理由:已經曝露的礦對 xray 本來就沒有情報價值,排除它只是讓獎勵類插件少了合法的檢定機會,擋不到任何作弊者。
 
 **一顆礦只會燒掉一次檢定。** 生命週期:
 
