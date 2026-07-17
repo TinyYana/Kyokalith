@@ -32,7 +32,7 @@ Rationale: if something is hiding under a player-placed block, it must have been
 
 | | |
 |---|---|
-| Server | **Spigot, Paper or Folia 26.2** (compiled against the Spigot API; runs in production on Paper) |
+| Server | **Spigot or Paper 26.2, or Folia 26.1.2** (newest Folia — no 26.2 Folia exists, hence `api-version: 26.1`; compiled against the Spigot API; runs in production on Paper) |
 | Java | **25** |
 | Hard dependencies | None |
 | Soft dependencies | NatureRevive (chunk-regeneration bridge, loaded via reflection only if present) |

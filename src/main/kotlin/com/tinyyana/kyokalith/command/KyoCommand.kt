@@ -25,8 +25,9 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
 
     private fun m(key: String, vararg args: Pair<String, Any?>) = plugin.messages.get(key, *args)
 
+    // Now 變體而非 atRegion:指令回覆若延後一 tick,RCON client 會永遠收不到(回應緩衝已 flush)
     private fun atBlock(location: Location, task: (Block) -> Unit) {
-        Schedulers.atRegion(plugin, location) { task(location.block) }
+        Schedulers.atRegionNow(plugin, location) { task(location.block) }
     }
 
     private fun atBlock(world: World, x: Int, y: Int, z: Int, task: (Block) -> Unit) =
@@ -238,7 +239,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             return true
         }
         // 背包是收禮者的 region 資料,不是發送者的:Folia 上從主控台或別的玩家執行緒直接塞會拋例外
-        Schedulers.atEntity(plugin, target) {
+        Schedulers.atEntityNow(plugin, target) {
             val item = plugin.eligibleOrePdc.tag(ItemStack(material, amount), ore.oreType, target.world.name, 0)
             val leftovers = target.inventory.addItem(item)
             leftovers.values.forEach { target.world.dropItemNaturally(target.location, it) }

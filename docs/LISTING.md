@@ -39,7 +39,7 @@ A cheater tunnels straight to an ore they can see through the wall — and mines
 An earlier prototype used the classic wipe-and-regenerate approach: 121 force-loaded chunks dragged TPS to 18.9. The current model deleted the entire scanning pipeline and runs at a constant cost per block-change event. It has been running in production on a survival server for weeks.
 
 [B]Requirements[/B]
-Spigot, Paper or Folia 26.2 · Java 25 · no dependencies (Kotlin stdlib and SQLite driver are fetched by the Bukkit library loader at startup). Compiled against the Spigot API; production-tested on Paper.
+Spigot or Paper 26.2, or Folia 26.1.2 (newest Folia release) · Java 25 · no dependencies (Kotlin stdlib and SQLite driver are fetched by the Bukkit library loader at startup). Compiled against the Spigot API; production-tested on Paper.
 
 [B]Commands & permissions[/B]
 Everything lives under [ICODE]/kyokalith[/ICODE] (alias [ICODE]/kyo[/ICODE]), gated by [ICODE]kyokalith.admin[/ICODE] (default: op): stats, inspect, preview, sample, resolve, suspend/resume, plus QA token tools. [ICODE]kyokalith.bypass[/ICODE] skips the reward-check path only — decoy resolution always runs. Full reference in the GitHub README.
@@ -77,14 +77,14 @@ No. Real-vs-decoy is decided by a hash keyed with a random per-server salt store
 Per block-change event: at most (removed blocks × 6) neighbor checks plus an in-memory hash — constant, deferred one tick, on the thread that owns the block. No scheduled tasks, no chunk scans, no DB on the event path.
 
 [B]Q: Folia?[/B]
-Supported since 1.2.0. Resolution runs on the region that owns the block, so it parallelises with the rest of the server rather than funnelling through one thread. Spigot and Paper are unaffected — the same build runs on all three.
+Supported since 1.2.0, on Folia 26.1.2 (the newest Folia release; the jar declares `api-version: 26.1` so it loads there). Resolution runs on the region that owns the block, so it parallelises with the rest of the server rather than funnelling through one thread. Spigot and Paper are unaffected — the same build runs on all three.
 ```
 
 ---
 
 ## Modrinth
 
-**Slug:** `kyokalith` · **Loaders:** Paper, Spigot, Folia · **Game version:** 26.2 · **License:** Custom (link to LICENSE on GitHub) · **Categories:** utility, game-mechanics
+**Slug:** `kyokalith` · **Loaders:** Paper, Spigot, Folia · **Game version:** 26.2 (Paper/Spigot), 26.1.2 (Folia) · **License:** Custom (link to LICENSE on GitHub) · **Categories:** utility, game-mechanics
 **Summary (one-liner):** Anti-X-Ray without touching world gen: buried ores stay decoys until first exposed — beats X-Ray, freecam, and seed maps with no packet tricks and no chunk scans.
 
 **Body:** use README.md verbatim (it is already Markdown), minus the Building section.

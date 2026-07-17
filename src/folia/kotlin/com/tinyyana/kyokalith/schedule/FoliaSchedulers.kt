@@ -16,8 +16,14 @@ object FoliaSchedulers {
         Bukkit.getRegionScheduler().run(plugin, world, cx, cz) { task.run() }
     }
 
-    fun atEntity(plugin: Plugin, entity: Entity, task: Runnable) {
-        entity.scheduler.run(plugin, { task.run() }, null)
+    fun atRegionNow(plugin: Plugin, location: Location, task: Runnable) {
+        if (Bukkit.isOwnedByCurrentRegion(location)) task.run() else atRegion(plugin, location, task)
+    }
+
+    fun atEntityNow(plugin: Plugin, entity: Entity, task: Runnable) {
+        // 排程 fallback 沒給 retired callback:目標實體在執行前移除(如玩家下線)時任務靜默丟棄,
+        // 發送者收不到回饋——已知限制,只影響 Folia 上跨 region 的 giveeligible
+        if (Bukkit.isOwnedByCurrentRegion(entity)) task.run() else entity.scheduler.run(plugin, { task.run() }, null)
     }
 
     fun globalTimer(plugin: Plugin, delay: Long, period: Long, task: Runnable): () -> Unit {

@@ -70,7 +70,7 @@ class KyokalithPlugin : JavaPlugin() {
         }
 
         chunkEpochStore = ChunkEpochStore(database)
-        dirtyPositionStore = DirtyPositionStore(database)
+        dirtyPositionStore = DirtyPositionStore(database, logger)
         suspendedChunkStore = SuspendedChunkStore(database)
         eligiblePlacedOreStore = EligiblePlacedOreStore(database)
         eligibleOrePdc = EligibleOrePdc(this)
