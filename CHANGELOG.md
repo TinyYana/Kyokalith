@@ -4,6 +4,8 @@ All notable changes to Kyokalith are documented here. Format follows [Keep a Cha
 
 ## [1.2.0] - 2026-07-17
 
+> Folia support was contributed by [RiceChen_ (RICE0707)](https://github.com/RICE0707) in [#1](https://github.com/TinyYana/Kyokalith/pull/1) — including the source-set isolation that keeps `folia-api` off the main compile classpath. Thank you!
+
 ### Added
 - **Folia support.** `folia-supported: true` is declared, and every scheduled task now runs on the thread that owns the data it touches: block work on the owning region, `/kyo giveeligible` on the recipient's entity scheduler, and the dirty-position flush (which only writes SQLite) on the global region. Spigot and Paper behaviour is unchanged — the same code path resolves to `Bukkit.getScheduler()` there. The startup line reports which mode is active (`scheduler: Folia regionized` / `Bukkit main thread`).
 - Admin commands that read or write blocks (`inspect`, `preview`, `sample`, `markeligible`, `resolve`) now run on the thread that owns the target coordinate — inline when the current thread already owns it, scheduled onto the owning region otherwise. On Folia a console command runs on the global thread, which owns no blocks at all, so these would otherwise have thrown. Spigot and Paper always dispatch commands on the main thread, so the inline path is always taken there and replies — including over RCON — behave exactly as in 1.1.0. Known limit: on Folia, an RCON command that has to hop regions gets an empty RCON response (the response buffer is flushed when dispatch returns and cannot wait for another thread).
