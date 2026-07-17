@@ -6,7 +6,7 @@ Paste-ready copy for each distribution platform. Keep claims in sync with README
 
 ## SpigotMC
 
-**Resource name:** `Kyokalith — Anti-X-Ray that never touches world generation`
+**Resource name:** `Kyokalith ⛏ Anti-X-Ray — cheaters tunnel to ore, mine stone | no packets · no scans · no lag`
 
 **Tag line (100 chars max):** `Buried ores are decoys until first exposed. Beats X-Ray, freecam & seed maps. No packets, no scans.`
 
@@ -85,7 +85,7 @@ Supported since 1.2.0, on Folia 26.1.2 (the newest Folia release; the jar declar
 ## Modrinth
 
 **Slug:** `kyokalith` · **Loaders:** Paper, Spigot, Folia · **Game version:** 26.2 (Paper/Spigot), 26.1.2 (Folia) · **License:** Custom (link to LICENSE on GitHub) · **Categories:** utility, game-mechanics
-**Summary (one-liner):** Anti-X-Ray without touching world gen: buried ores stay decoys until first exposed — beats X-Ray, freecam, and seed maps with no packet tricks and no chunk scans.
+**Summary (one-liner):** Anti-X-Ray where cheaters tunnel to ore and mine stone: buried ores are decoys until first exposed — beats X-Ray, freecam, and seed maps with no packet tricks and no chunk scans.
 
 **Body:** use README.md verbatim (it is already Markdown), minus the Building section.
 
