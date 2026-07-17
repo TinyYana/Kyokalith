@@ -6,8 +6,11 @@ import com.tinyyana.kyokalith.chunk.EpochedChunk
 import com.tinyyana.kyokalith.chunk.LocalPos
 import com.tinyyana.kyokalith.eligibility.EligiblePlacedOre
 import com.tinyyana.kyokalith.materialization.MaterializationService
+import com.tinyyana.kyokalith.schedule.Schedulers
+import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.World
+import org.bukkit.block.Block
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
@@ -21,6 +24,13 @@ import java.util.UUID
 class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabCompleter {
 
     private fun m(key: String, vararg args: Pair<String, Any?>) = plugin.messages.get(key, *args)
+
+    private fun atBlock(location: Location, task: (Block) -> Unit) {
+        Schedulers.atRegion(plugin, location) { task(location.block) }
+    }
+
+    private fun atBlock(world: World, x: Int, y: Int, z: Int, task: (Block) -> Unit) =
+        atBlock(Location(world, x.toDouble(), y.toDouble(), z.toDouble()), task)
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         if (!sender.hasPermission("kyokalith.admin")) {
@@ -79,27 +89,28 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             return true
         }
         val world = resolveWorld(sender, args.getOrNull(3)) ?: return true
-        val block = world.getBlockAt(x, y, z)
-        val coord = chunkCoord(world, x, z)
-        val epoch = plugin.chunkEpochStore.get(coord)
-        val epoched = EpochedChunk(world.name, coord.cx, coord.cz, epoch)
-        val local = LocalPos(Math.floorMod(x, 16), y, Math.floorMod(z, 16))
-        val placed = plugin.eligiblePlacedOreStore.find(world.name, x, y, z)
-        // 已是礦物的座標要用基底材質問 f,否則永遠 none,無法確認天然 eligible 的 f-match
-        val baseName = MaterializationService.nativeOreBase(block.type)?.name ?: block.type.name
-        val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, baseName, world.environment.name)
+        atBlock(world, x, y, z) { block ->
+            val coord = chunkCoord(world, x, z)
+            val epoch = plugin.chunkEpochStore.get(coord)
+            val epoched = EpochedChunk(world.name, coord.cx, coord.cz, epoch)
+            val local = LocalPos(Math.floorMod(x, 16), y, Math.floorMod(z, 16))
+            val placed = plugin.eligiblePlacedOreStore.find(world.name, x, y, z)
+            // 已是礦物的座標要用基底材質問 f,否則永遠 none,無法確認天然 eligible 的 f-match
+            val baseName = MaterializationService.nativeOreBase(block.type)?.name ?: block.type.name
+            val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, baseName, world.environment.name)
 
-        sender.sendMessage(
-            listOf(
-                m("inspect-header", "x" to x, "y" to y, "z" to z),
-                m("inspect-world-epoch", "world" to world.name, "epoch" to epoch),
-                m("inspect-block", "block" to block.type.name),
-                m("inspect-dirty", "dirty" to plugin.dirtyPositionStore.isDirty(epoched, local)),
-                m("inspect-suspended", "suspended" to plugin.suspendedChunkStore.isSuspended(coord)),
-                m("inspect-placed", "ore" to (placed?.oreType ?: m("none"))),
-                m("inspect-vein", "result" to (result?.let { "${it.oreType} -> ${it.material} (${it.veinId})" } ?: m("none"))),
-            ).joinToString("\n"),
-        )
+            sender.sendMessage(
+                listOf(
+                    m("inspect-header", "x" to x, "y" to y, "z" to z),
+                    m("inspect-world-epoch", "world" to world.name, "epoch" to epoch),
+                    m("inspect-block", "block" to block.type.name),
+                    m("inspect-dirty", "dirty" to plugin.dirtyPositionStore.isDirty(epoched, local)),
+                    m("inspect-suspended", "suspended" to plugin.suspendedChunkStore.isSuspended(coord)),
+                    m("inspect-placed", "ore" to (placed?.oreType ?: m("none"))),
+                    m("inspect-vein", "result" to (result?.let { "${it.oreType} -> ${it.material} (${it.veinId})" } ?: m("none"))),
+                ).joinToString("\n"),
+            )
+        }
         return true
     }
 
@@ -115,18 +126,20 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
                 return true
             }
             val world = resolveWorld(sender, args.getOrNull(4)) ?: return true
-            world.getBlockAt(x, y, z)
+            Location(world, x.toDouble(), y.toDouble(), z.toDouble())
         } else {
             val player = sender as? Player ?: return playerOnly(sender)
-            player.location.block
+            player.location
         }
-        val hits = collectHits(center, radius, limit = 12)
-        sender.sendMessage(m("preview-hits", "radius" to radius, "total" to hits.total))
-        hits.examples.forEach {
-            sender.sendMessage(m("preview-example", "x" to it.x, "y" to it.y, "z" to it.z, "ore" to it.oreType, "material" to it.material))
-        }
-        if (hits.total > hits.examples.size) {
-            sender.sendMessage(m("preview-omitted", "count" to hits.total - hits.examples.size))
+        atBlock(center) { block ->
+            val hits = collectHits(block, radius, limit = 12)
+            sender.sendMessage(m("preview-hits", "radius" to radius, "total" to hits.total))
+            hits.examples.forEach {
+                sender.sendMessage(m("preview-example", "x" to it.x, "y" to it.y, "z" to it.z, "ore" to it.oreType, "material" to it.material))
+            }
+            if (hits.total > hits.examples.size) {
+                sender.sendMessage(m("preview-omitted", "count" to hits.total - hits.examples.size))
+            }
         }
         return true
     }
@@ -138,15 +151,18 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             return true
         }
         val radius = parseRadius(sender, args.getOrNull(1), 8) ?: return true
-        val hits = collectHits(player.location.block, radius, limit = 0)
-        sender.sendMessage(m("sample-result", "radius" to radius, "total" to hits.total, "scanned" to hits.scanned))
+        atBlock(player.location) { block ->
+            val hits = collectHits(block, radius, limit = 0)
+            sender.sendMessage(m("sample-result", "radius" to radius, "total" to hits.total, "scanned" to hits.scanned))
+        }
         return true
     }
 
     private fun markEligible(sender: CommandSender, args: List<String>): Boolean {
         val player = sender as? Player ?: return playerOnly(sender)
-        val block = when (args.size) {
-            0 -> player.getTargetBlockExact(8) ?: run {
+        // 玩家指令跑在自己的 region 上,瞄準 8 格內必是同 region,所以射線可以就地算
+        val location = when (args.size) {
+            0 -> player.getTargetBlockExact(8)?.location ?: run {
                 sender.sendMessage(m("markeligible-look-at"))
                 return true
             }
@@ -158,38 +174,40 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
                     sender.sendMessage(m("coords-not-int"))
                     return true
                 }
-                player.world.getBlockAt(x, y, z)
+                Location(player.world, x.toDouble(), y.toDouble(), z.toDouble())
             }
             else -> {
                 sender.sendMessage(m("usage-markeligible"))
                 return true
             }
         }
-        val ore = oreForMaterial(block.type) ?: run {
-            sender.sendMessage(m("not-enabled-ore", "material" to block.type.name))
-            return true
+        atBlock(location) { block ->
+            val ore = oreForMaterial(block.type) ?: run {
+                sender.sendMessage(m("not-enabled-ore", "material" to block.type.name))
+                return@atBlock
+            }
+            val epoch = epochAt(block.world, block.x, block.z)
+            val coord = chunkCoord(block.world, block.x, block.z)
+            val epoched = EpochedChunk(block.world.name, coord.cx, coord.cz, epoch)
+            val local = LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
+            plugin.dirtyPositionStore.markDirty(epoched, local)
+            plugin.dirtyPositionStore.flush(epoched)
+            plugin.eligiblePlacedOreStore.insert(
+                EligiblePlacedOre(
+                    world = block.world.name,
+                    x = block.x,
+                    y = block.y,
+                    z = block.z,
+                    epoch = epoch,
+                    oreType = ore.oreType,
+                    oreMaterial = block.type.name,
+                    tokenId = UUID.randomUUID().toString(),
+                    placedBy = player.uniqueId,
+                    placedAtMillis = Instant.now().toEpochMilli(),
+                ),
+            )
+            sender.sendMessage(m("marked-eligible", "ore" to ore.oreType, "x" to block.x, "y" to block.y, "z" to block.z))
         }
-        val epoch = epochAt(block.world, block.x, block.z)
-        val coord = chunkCoord(block.world, block.x, block.z)
-        val epoched = EpochedChunk(block.world.name, coord.cx, coord.cz, epoch)
-        val local = LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
-        plugin.dirtyPositionStore.markDirty(epoched, local)
-        plugin.dirtyPositionStore.flush(epoched)
-        plugin.eligiblePlacedOreStore.insert(
-            EligiblePlacedOre(
-                world = block.world.name,
-                x = block.x,
-                y = block.y,
-                z = block.z,
-                epoch = epoch,
-                oreType = ore.oreType,
-                oreMaterial = block.type.name,
-                tokenId = UUID.randomUUID().toString(),
-                placedBy = player.uniqueId,
-                placedAtMillis = Instant.now().toEpochMilli(),
-            ),
-        )
-        sender.sendMessage(m("marked-eligible", "ore" to ore.oreType, "x" to block.x, "y" to block.y, "z" to block.z))
         return true
     }
 
@@ -219,10 +237,13 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             sender.sendMessage(m("unknown-material", "material" to materialName))
             return true
         }
-        val item = plugin.eligibleOrePdc.tag(ItemStack(material, amount), ore.oreType, target.world.name, 0)
-        val leftovers = target.inventory.addItem(item)
-        leftovers.values.forEach { target.world.dropItemNaturally(target.location, it) }
-        sender.sendMessage(m("gave-eligible", "player" to target.name, "amount" to amount, "ore" to ore.oreType))
+        // 背包是收禮者的 region 資料,不是發送者的:Folia 上從主控台或別的玩家執行緒直接塞會拋例外
+        Schedulers.atEntity(plugin, target) {
+            val item = plugin.eligibleOrePdc.tag(ItemStack(material, amount), ore.oreType, target.world.name, 0)
+            val leftovers = target.inventory.addItem(item)
+            leftovers.values.forEach { target.world.dropItemNaturally(target.location, it) }
+            sender.sendMessage(m("gave-eligible", "player" to target.name, "amount" to amount, "ore" to ore.oreType))
+        }
         return true
     }
 
@@ -280,8 +301,10 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             return true
         }
         val world = resolveWorld(sender, args.getOrNull(3)) ?: return true
-        plugin.materializationService.resolveRemoved(listOf(world.getBlockAt(x, y, z)))
-        sender.sendMessage(m("resolve-ok", "x" to x, "y" to y, "z" to z))
+        atBlock(world, x, y, z) { block ->
+            plugin.materializationService.resolveRemoved(listOf(block))
+            sender.sendMessage(m("resolve-ok", "x" to x, "y" to y, "z" to z))
+        }
         return true
     }
 
@@ -356,7 +379,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
         return world
     }
 
-    private fun collectHits(center: org.bukkit.block.Block, radius: Int, limit: Int): HitSummary {
+    private fun collectHits(center: Block, radius: Int, limit: Int): HitSummary {
         val world = center.world
         var scanned = 0
         var total = 0

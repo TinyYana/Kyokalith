@@ -14,6 +14,7 @@ import com.tinyyana.kyokalith.mining.OreEligibilityService
 import com.tinyyana.kyokalith.mining.OreLifecycleListener
 import com.tinyyana.kyokalith.ore.OreRegistry
 import com.tinyyana.kyokalith.pdc.EligibleOrePdc
+import com.tinyyana.kyokalith.schedule.Schedulers
 import com.tinyyana.kyokalith.vein.OreVeinResolver
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
@@ -45,7 +46,7 @@ class KyokalithPlugin : JavaPlugin() {
     var natureReviveBridgeActive: Boolean = false
         private set
 
-    private var dirtyFlushTaskId = -1
+    private var cancelDirtyFlush: (() -> Unit)? = null
 
     override fun onEnable() {
         mergeConfigDefaults()
@@ -78,12 +79,9 @@ class KyokalithPlugin : JavaPlugin() {
         oreEligibilityService = OreEligibilityService(this)
 
         val flushIntervalTicks = config.getLong("database.dirty_flush_interval_ticks", 40L)
-        dirtyFlushTaskId = server.scheduler.scheduleSyncRepeatingTask(
-            this,
-            { dirtyPositionStore.flushAll() },
-            flushIntervalTicks,
-            flushIntervalTicks,
-        )
+        cancelDirtyFlush = Schedulers.globalTimer(this, flushIntervalTicks, flushIntervalTicks) {
+            dirtyPositionStore.flushAll()
+        }
 
         KyoCommand(this).let { cmd ->
             getCommand("kyokalith")?.apply {
@@ -95,12 +93,12 @@ class KyokalithPlugin : JavaPlugin() {
         server.pluginManager.registerEvents(OreLifecycleListener(this, oreEligibilityService), this)
         natureReviveBridgeActive = NatureReviveBridge(this).register()
         logger.info(
-            "Kyokalith ${description.version} enabled (decoy model: event-driven exposure resolution, silk/placed token lifecycle, OreCheckTriggerEvent available, no chunk scanning, NatureRevive bridge: ${if (natureReviveBridgeActive) "active" else "inactive"})",
+            "Kyokalith ${description.version} enabled (decoy model: event-driven exposure resolution, silk/placed token lifecycle, OreCheckTriggerEvent available, no chunk scanning, NatureRevive bridge: ${if (natureReviveBridgeActive) "active" else "inactive"}, scheduler: ${if (Schedulers.isFolia) "Folia regionized" else "Bukkit main thread"})",
         )
     }
 
     override fun onDisable() {
-        if (dirtyFlushTaskId != -1) server.scheduler.cancelTask(dirtyFlushTaskId)
+        cancelDirtyFlush?.invoke()
         if (::dirtyPositionStore.isInitialized) dirtyPositionStore.flushAll()
     }
 

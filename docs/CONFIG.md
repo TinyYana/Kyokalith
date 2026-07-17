@@ -27,9 +27,9 @@ Language files live in `plugins/Kyokalith/lang/<locale>.yml` and override the bu
 
 > 🔴 **`dirty_flush_interval_ticks` is a red line in both directions.**
 >
-> The write-back task runs on the **sync scheduler**; each flush opens a fresh JDBC connection per pending chunk and does `INSERT OR REPLACE` (no connection pool).
+> The write-back task runs on the **sync scheduler** (the global region scheduler on Folia); each flush opens a fresh JDBC connection per pending chunk and does `INSERT OR REPLACE` (no connection pool).
 >
-> - **Too small (e.g. `1`)**: you are now writing SQLite on the main thread every tick.
+> - **Too small (e.g. `1`)**: you are now writing SQLite on a ticking thread every tick. Values below `1` are clamped to `1`.
 > - **Too large**: more dirty positions are lost on a crash — and losing dirty flags **is a correctness/exploit problem**, not just data loss: blocks a player covered up become "first-exposure resolvable" again, reopening the cover-and-dig exploit.
 >
 > The default 40 is the balance point. Don't touch it unless you know what you're doing.

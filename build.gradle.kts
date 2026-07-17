@@ -10,10 +10,17 @@ repositories {
     maven("https://repo.papermc.io/repository/maven-public/")
 }
 
+sourceSets {
+    create("folia")
+}
+
 dependencies {
     compileOnly(libs.spigot.api)
     // stdlib 不 shade:runtime 由 plugin.yml 的 libraries(Bukkit library loader)提供,版本要與此一致
     compileOnly(libs.kotlin.stdlib)
+    compileOnly(sourceSets["folia"].output)
+    "foliaCompileOnly"(libs.folia.api)
+    "foliaCompileOnly"(libs.kotlin.stdlib)
     testImplementation(libs.spigot.api)
     testImplementation(libs.sqlite.jdbc)
     testImplementation(kotlin("test"))
@@ -34,6 +41,7 @@ tasks {
 
     shadowJar {
         archiveClassifier.set("")
+        from(sourceSets["folia"].output)
     }
 
     runServer {

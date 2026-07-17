@@ -3,6 +3,7 @@ package com.tinyyana.kyokalith.integration
 import com.tinyyana.kyokalith.KyokalithPlugin
 import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.chunk.EpochedChunk
+import com.tinyyana.kyokalith.schedule.Schedulers
 import org.bukkit.Chunk
 import org.bukkit.event.Event
 import org.bukkit.event.EventPriority
@@ -31,7 +32,7 @@ class NatureReviveBridge(private val plugin: KyokalithPlugin) {
     private fun handle(event: Event) {
         val chunk = runCatching { event.javaClass.getMethod("getChunk").invoke(event) as? Chunk }.getOrNull()
             ?: return
-        plugin.server.scheduler.runTask(plugin, Runnable { handleRegeneratedChunk(chunk) })
+        Schedulers.atRegion(plugin, chunk.world, chunk.x, chunk.z) { handleRegeneratedChunk(chunk) }
     }
 
     private fun handleRegeneratedChunk(chunk: Chunk) {

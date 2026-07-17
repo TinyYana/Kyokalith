@@ -4,6 +4,9 @@ kotlin = "2.4.0"
 spigot-api = "26.2-R0.1-SNAPSHOT"
 minecraft = "26.2"
 sqlite-jdbc = "3.49.1.0"
+# 刻意落後 spigot-api:Folia 沒有發佈 26.2(最新就是這版)。橋接只用到跨版本穩定的
+# scheduler 介面,而且是 compileOnly,所以版本差不影響——真正的 API 由執行中的伺服器提供。
+folia-api = "26.1.2.build.8-stable"
 
 shadow = "9.4.3"
 run-task = "3.0.2"
@@ -11,6 +14,9 @@ run-task = "3.0.2"
 [libraries]
 # 編譯基準刻意用 spigot-api 而非 paper-api:保證不誤用 Paper 專屬 API,讓「Spigot 相容」是編譯期事實
 spigot-api = { module = "org.spigotmc:spigot-api", version.ref = "spigot-api" }
+# 只給 src/folia 這個 source set(見 build.gradle.kts)。絕對不要加進 main 的 compileOnly:
+# folia-api 會連整個 Paper API 一起帶進可見範圍,上面那個編譯期保證就沒了。
+folia-api = { module = "dev.folia:folia-api", version.ref = "folia-api" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 

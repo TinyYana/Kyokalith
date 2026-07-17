@@ -151,7 +151,7 @@ suspended_chunks(world, cx, cz, reason, created_at, PRIMARY KEY(world, cx, cz))
 
 ## Performance contract (read before changing anything)
 
-**Per-event cost is bounded by a constant: `removed blocks × 6`.** Six face neighbors only, main thread only, deferred one tick.
+**Per-event cost is bounded by a constant: `removed blocks × 6`.** Six face neighbors only, deferred one tick, always on the thread that owns the block — the main thread on Spigot/Paper, the owning region on Folia. Never async: the stores are only safe because every write to a given chunk arrives from that chunk's owning thread.
 
 **Forbidden:**
 

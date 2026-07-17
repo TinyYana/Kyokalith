@@ -1,6 +1,7 @@
 package com.tinyyana.kyokalith.materialization
 
 import com.tinyyana.kyokalith.KyokalithPlugin
+import com.tinyyana.kyokalith.schedule.Schedulers
 import org.bukkit.block.Block
 import org.bukkit.block.BlockFace
 import org.bukkit.event.EventHandler
@@ -41,7 +42,7 @@ class MaterializationListener(
     @EventHandler(ignoreCancelled = true)
     fun onBlockForm(event: BlockFormEvent) {
         if (event.newState.type in MaterializationService.BASE_BLOCKS) {
-            plugin.server.scheduler.runTask(plugin, Runnable { materialization.markDirty(event.block) })
+            markDirtyLater(event.block)
         }
     }
 
@@ -50,7 +51,7 @@ class MaterializationListener(
         if (event.to.isAir) {
             resolveLater(listOf(event.block))
         } else if (event.to in MaterializationService.BASE_BLOCKS) {
-            plugin.server.scheduler.runTask(plugin, Runnable { materialization.markDirty(event.block) })
+            markDirtyLater(event.block)
         }
     }
 
@@ -86,14 +87,22 @@ class MaterializationListener(
     private fun onPistonMove(moved: List<Block>, direction: BlockFace) {
         if (moved.isEmpty()) return
         val destinations = moved.map { it.getRelative(direction) }
-        plugin.server.scheduler.runTask(plugin, Runnable {
+        atFirstBlockRegion(moved) {
             destinations.forEach { materialization.markDirty(it) }
             materialization.resolveRemoved(moved)
-        })
+        }
     }
 
     private fun resolveLater(removed: List<Block>) {
         if (removed.isEmpty()) return
-        plugin.server.scheduler.runTask(plugin, Runnable { materialization.resolveRemoved(removed) })
+        atFirstBlockRegion(removed) { materialization.resolveRemoved(removed) }
+    }
+
+    private fun markDirtyLater(block: Block) {
+        Schedulers.atRegion(plugin, block.location) { materialization.markDirty(block) }
+    }
+
+    private fun atFirstBlockRegion(blocks: List<Block>, task: () -> Unit) {
+        Schedulers.atRegion(plugin, blocks.first().location) { task() }
     }
 }

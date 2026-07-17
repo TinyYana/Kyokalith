@@ -2,6 +2,19 @@
 
 All notable changes to Kyokalith are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/). The release CI extracts the matching `## [x.y.z]` section as the GitHub Release notes — a tag without a section here fails the release on purpose.
 
+## [1.2.0] - 2026-07-17
+
+### Added
+- **Folia support.** `folia-supported: true` is declared, and every scheduled task now runs on the thread that owns the data it touches: block work on the owning region, `/kyo giveeligible` on the recipient's entity scheduler, and the dirty-position flush (which only writes SQLite) on the global region. Spigot and Paper behaviour is unchanged — the same code path resolves to `Bukkit.getScheduler()` there. The startup line reports which mode is active (`scheduler: Folia regionized` / `Bukkit main thread`).
+- Admin commands that read or write blocks (`inspect`, `preview`, `sample`, `markeligible`, `resolve`) now hop to the region owning the target coordinate before touching it. On Folia a console command runs on the global thread, which owns no blocks at all, so these would otherwise have thrown. The visible change on Spigot is that their reply arrives one tick later.
+
+### Changed
+- **Folia's scheduler API is compiled in a separate `folia` source set**, not added to `main`. `folia-api` transitively exposes the whole Paper API, so putting it on `main`'s compile classpath would have silently retired the [1.0.0] guarantee that Spigot compatibility is a compile-time fact. `main` still sees only `spigot-api`; the one file that calls Folia (`FoliaSchedulers`) is loaded only when running on Folia, and `SchedulersSpigotSafetyTest` fails if a Folia reference ever reaches the class Spigot does load.
+- `database.dirty_flush_interval_ticks` below `1` is now clamped to `1`. Bukkit silently did this already; Folia rejects it outright, so the same config would have failed startup there.
+
+### Fixed
+- **Dirty positions could be lost on Folia**, which is an exploit problem rather than mere data loss — a dropped dirty flag makes a block a player covered up "first-exposure resolvable" again, reopening the cover-and-dig hole. Each chunk's position set was a plain `HashSet`, safe on Spigot only because `markDirty` and the flush task shared the main thread. Under regionized scheduling the flush runs on the global thread and encodes the set while a region thread is still adding to it, throwing `ConcurrentModificationException` mid-write. The per-chunk sets are now concurrent; `DirtyPositionConcurrencyTest` reproduces the original failure. Spigot and Paper were never affected.
+
 ## [1.1.0] - 2026-07-16
 
 ### Changed

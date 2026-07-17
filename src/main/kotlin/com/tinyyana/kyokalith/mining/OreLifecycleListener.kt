@@ -5,6 +5,7 @@ import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.eligibility.EligiblePlacedOre
 import com.tinyyana.kyokalith.event.OreCheckTriggerEvent
 import com.tinyyana.kyokalith.event.TriggerSource
+import com.tinyyana.kyokalith.schedule.Schedulers
 import org.bukkit.GameMode
 import org.bukkit.enchantments.Enchantment
 import org.bukkit.event.EventHandler
@@ -56,14 +57,14 @@ class OreLifecycleListener(
         val key = BlockKey.of(event.block)
         val pending = PendingBreak(eligible, hasSilkTouch(event))
         pendingBreaks[key] = pending
-        plugin.server.scheduler.runTask(plugin, Runnable {
+        Schedulers.atRegion(plugin, event.block.location) {
             pendingBreaks.remove(key)?.let {
                 if (!it.silkTouch) {
                     plugin.logger.fine("eligible ore break at $key had no BlockDropItemEvent; token consumed without OreCheckTriggerEvent")
                 }
                 consumePlacedIfNeeded(key, it)
             }
-        })
+        }
     }
 
     @EventHandler(ignoreCancelled = true)

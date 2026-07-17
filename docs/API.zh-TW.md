@@ -151,7 +151,7 @@ suspended_chunks(world, cx, cz, reason, created_at, PRIMARY KEY(world, cx, cz))
 
 ## 效能契約(改動前先讀)
 
-**每個事件的成本上限是常數:`被移除的方塊數 × 6`。** 只看六個面鄰居,只在主執行緒,延後一 tick。
+**每個事件的成本上限是常數:`被移除的方塊數 × 6`。** 只看六個面鄰居,延後一 tick,而且一定在「擁有該方塊的執行緒」上跑——Spigot/Paper 是主執行緒,Folia 是擁有它的 region。永遠不要改成 async:各個 store 之所以安全,前提就是同一個 chunk 的寫入永遠來自同一條執行緒。
 
 **不准做的事:**
 

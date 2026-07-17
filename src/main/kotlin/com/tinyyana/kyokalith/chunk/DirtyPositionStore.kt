@@ -54,7 +54,7 @@ class DirtyPositionStore(private val db: KyokalithDatabase) {
     }
 
     private fun loadIfAbsent(chunk: EpochedChunk): MutableSet<LocalPos> =
-        loaded.getOrPut(chunk) { queryPositions(chunk).toMutableSet() }
+        loaded.getOrPut(chunk) { ConcurrentHashMap.newKeySet<LocalPos>().apply { addAll(queryPositions(chunk)) } }
 
     private fun queryPositions(chunk: EpochedChunk): Set<LocalPos> =
         db.connect().use { conn ->

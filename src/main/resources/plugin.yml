@@ -4,9 +4,11 @@ prefix: Kyokalith
 version: '${version}'
 
 main: com.tinyyana.kyokalith.KyokalithPlugin
-api-version: '26.2'
+api-version: '26.1'
 load: POSTWORLD
 softdepend: [ NatureRevive ]
+
+folia-supported: true
 
 authors: [ TinyYana ]
 website: https://tinyyana.com

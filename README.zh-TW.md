@@ -32,7 +32,7 @@
 
 | | |
 |---|---|
-| 伺服器 | **Spigot 或 Paper 26.2**(以 Spigot API 編譯;正式環境跑 Paper) |
+| 伺服器 | **Spigot、Paper 或 Folia 26.2**(以 Spigot API 編譯;正式環境跑 Paper) |
 | Java | **25** |
 | 硬相依 | 無 |
 | 軟相依 | NatureRevive(有裝才會接區塊重生事件,反射載入) |
