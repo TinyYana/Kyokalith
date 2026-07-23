@@ -8,7 +8,7 @@
 # Locale for admin command output. Bundled: en, zh_TW.
 # Files under plugins/Kyokalith/lang/<locale>.yml override the bundled text key-by-key;
 # add your own lang/<name>.yml and point locale at it for a custom language.
-locale: en
+locale: zh_TW
 
 database:
   file: kyokalith.db
