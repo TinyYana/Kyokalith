@@ -27,14 +27,19 @@ database:
 # way. Bundled defaults follow vanilla rarity tiers: common ores are low, rare ores are high, so
 # a rare ore always wins when its sphere overlaps a common one's.
 ores:
+  # 2026-07-24 第二輪校準:Yana 直接查證原版真實生成資料,以下逐項對照修正 y_min/y_max/
+  # preferred_y(密度 cell_chance/vein_size 沒有一併對照原版數字,原版沒有直接對應這套模型的
+  # 「每萬格命中率」概念,維持既有值,只修正被證實設錯的範圍/峰值)。
   coal:
     enabled: true
     materials:
       stone: COAL_ORE
       deepslate: DEEPSLATE_COAL_ORE
+    # 原版:Y=0~256,Y=136 以上的高山最多,Y=0 以下不再生成——y_max 320→256、
+    # preferred_y 96→192(貼近「高山」帶,不是原本錯設的中段)。
     y_min: 0
-    y_max: 320
-    preferred_y: 96
+    y_max: 256
+    preferred_y: 192
     density: 1.0
     vein_size_min: 1
     vein_size_max: 10
@@ -45,8 +50,10 @@ ores:
     materials:
       stone: IRON_ORE
       deepslate: DEEPSLATE_IRON_ORE
+    # 原版:Y=-64~320,Y=16 或高山 Y=232 兩處最常見(雙峰,這套模型只支援單峰三角分布)——
+    # y_max 256→320 對齊真實上限;peak 保留在 Y=16(深板岩大型鐵礦脈也在這一段,原本就對)。
     y_min: -64
-    y_max: 256
+    y_max: 320
     preferred_y: 16
     density: 1.0
     vein_size_min: 1
@@ -58,7 +65,9 @@ ores:
     materials:
       stone: COPPER_ORE
       deepslate: DEEPSLATE_COPPER_ORE
-    y_min: -16
+    # 原版:Y=-64~112,Y=48 最常見(滴水溶洞生物群系加倍,這套模型沒有生物群系概念,略過)——
+    # y_min 原本錯設成 -16,改回 -64;peak(48)原本就對。
+    y_min: -64
     y_max: 112
     preferred_y: 48
     density: 1.0
@@ -71,6 +80,8 @@ ores:
     materials:
       stone: GOLD_ORE
       deepslate: DEEPSLATE_GOLD_ORE
+    # 原版:Y=-64~32,Y=-16 最常見(惡地生物群系可到 Y=256,沒有生物群系概念,略過)——
+    # 範圍與 peak 原本就對,沒有異動。
     y_min: -64
     y_max: 32
     preferred_y: -16
@@ -84,9 +95,10 @@ ores:
     materials:
       stone: REDSTONE_ORE
       deepslate: DEEPSLATE_REDSTONE_ORE
+    # 原版:Y=-64~16,跟鑽石一樣在 Y=-59 最常見——原本 preferred_y 錯設成 -32,改成 -59。
     y_min: -64
     y_max: 16
-    preferred_y: -32
+    preferred_y: -59
     density: 1.0
     vein_size_min: 1
     vein_size_max: 8
@@ -123,39 +135,55 @@ ores:
     materials:
       stone: EMERALD_ORE
       deepslate: DEEPSLATE_EMERALD_ORE
+    # 原版:Y=-16~256,只限山地生物群系,位置越高機率越大(單向遞增,不是中段最多)——這套模型
+    # 只支援三角分布峰值,peak 224→256(=y_max)最貼近「越高越常見」;生物群系限制沒有對應概念,略過。
     y_min: -16
     y_max: 256
-    preferred_y: 224
+    preferred_y: 256
     density: 1.0
     vein_size_min: 1
     vein_size_max: 3
     cell_chance: 0.009
     priority: 80
+  # 2026-07-24 第二輪校準(見 KyokalithTestPlan/commit message 完整推導):Yana 實機回報「地獄挖
+  # 普通地獄石,挖的炸的都挖不到」——RCON 排查(手動觸發 MaterializationService.resolveRemoved,
+  # 走跟真實事件完全相同的路徑)證明決算/上鎖/setType 這條核心邏輯本身沒有壞,問題是密度*與*
+  # y_min/y_max/preferred_y 設定本身不準:cell_chance=0.045 在(錯誤地)設成峰值的 y60 量到的
+  # 命中率只有個位數到十幾/10k,換算約每 300~1000 格才有一次命中——不是「稀有」而是「幾乎抽不到」。
+  # Yana 直接查證原版真實生成資料予以修正:①下界石英礦「Y=0~127,Y10-114 最常見(玄武岩三角洲
+  # 加倍,沒有生物群系概念,略過),每區塊 16 次生成嘗試、單簇最大 14 格」——y_min/y_max 10~117
+  # 改成 0~127 對齊真實上下限,原版在這段幾乎沒有明顯的單一 Y 峰值(近乎整段常見),peak 維持在
+  # 範圍中段;`vein_size_max` 10→14 直接對齊「單簇最大 14 格」,`cell_chance` 大幅拉高反映
+  # 「16 次/區塊」的高頻;②下界金礦「Y=0~127,Y15 最常見」——`preferred_y: 60` 原本是設定本身
+  # 的錯誤(不是密度問題),金礦峰值離地面近,不是離地面遠,改成 `preferred_y: 15` 才對得上原版
+  # 真實分布,y_min/y_max 同步改成 0~127,`cell_chance` 也一併拉高。地獄本身天然洞穴多,新曝露的
+  # 機會比地上少,同樣密度換算成「玩家實際找到的機率」會比地上更吃虧,拉高幅度因此比單純對齊原版
+  # 數字再更寬鬆一些。
   nether_quartz:
     enabled: true
     dimension: NETHER
     materials:
       stone: NETHER_QUARTZ_ORE
-    y_min: 10
-    y_max: 117
+    y_min: 0
+    y_max: 127
     preferred_y: 60
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 10
-    cell_chance: 0.045
+    vein_size_max: 14
+    cell_chance: 0.28
     priority: 10
   nether_gold:
     enabled: true
     dimension: NETHER
     materials:
       stone: NETHER_GOLD_ORE
-    y_min: 10
-    y_max: 117
-    preferred_y: 60
+    y_min: 0
+    y_max: 127
+    preferred_y: 15
     density: 1.0
     vein_size_min: 1
     vein_size_max: 10
-    cell_chance: 0.030
+    cell_chance: 0.11
     priority: 40
   # 2026-07-24 recalibrated (see docs/KYOKALITH_SPEC.md handoff notes / commit message for the
   # full Monte Carlo derivation): cell_chance was 0.006 (the lowest of any ore) and vein_size_max
@@ -164,9 +192,11 @@ ores:
   # "ancient debris is basically unfindable in the y8-22 layer" reports; y_min/y_max/preferred_y
   # already matched vanilla's shape and were left untouched. cell_chance 0.006->0.05 (~8x) and
   # vein_size_max 2->3 (matching vanilla's real per-vein block count of 3 for both of its
-  # overlapping distributions) measured ~0.6-1.0 hits/10k in the y8-22 band — clearly rarer than
-  # nether_quartz/nether_gold's own measured peak density (~3.4/10k and ~1.4/10k at y60) but no
-  # longer indistinguishable from zero. Remember this is *only* the blind-dig-into-buried-decoy
+  # overlapping distributions) measured ~0.6-1.0 hits/10k in the y8-22 band. (2026-07-24 second
+  # pass: the "clearly rarer than nether_quartz/nether_gold" comparison this paragraph used to make
+  # no longer applies as originally measured — quartz/gold's own y_min/y_max/preferred_y were
+  # themselves wrong at the time and have since been corrected against real vanilla generation
+  # data, see the comment above those two entries.) Remember this is *only* the blind-dig-into-buried-decoy
   # contribution: most of what a player actually finds at y15 is real, already-exposed vanilla
   # ancient debris on cave/ravine walls (WORLDGEN_EXPOSED, untouched by this plugin) — this value
   # only had to stop being ~zero, not carry the entire "findable in 10-20 minutes" experience alone.

@@ -92,4 +92,58 @@ class NetherOreDensityMonteCarloTest {
         assertTrue(quartzTotal > 0.0, "nether_quartz 在 y10-20 整段掛零,可能有異常")
         assertTrue(goldTotal > 0.0, "nether_gold 在 y10-20 整段掛零,可能有異常")
     }
+
+    /**
+     * 2026-07-24 第二輪校準:RCON 排查證明「決算→上鎖→setType」這條核心邏輯本身沒有壞(手動
+     * 觸發 `MaterializationService.resolveRemoved`,走跟真實 BlockBreakEvent/EntityExplodeEvent
+     * 完全相同的路徑,虛擬座標正確變成預測的礦、正確寫入 materialized_positions)——問題是密度
+     * 太低*且* nether_gold 的 `preferred_y` 本身設錯:原本兩者都設 60,但 Yana 查證原版真實生成
+     * 資料後確認地獄金礦實際峰值在 Y=15(離地面近),不是 Y=60。石英礦原版接近整段常見,沒有明顯
+     * 單一峰值,peak 維持在範圍中段即可。密度部分:`cell_chance=0.045` 換算約每 300~1000 格才一次
+     * 命中,一般玩家一次挖礦/炸礦的曝露量遠遠不到這個量級,體感等於挖不到。石英拉到 0.28(同時
+     * `vein_size_max` 10→14 對齊原版「單簇最大 14 格」)、金礦拉到 0.11(peak 移到 y15 後量測)。
+     */
+    @Test
+    fun `nether_quartz peak density is high enough to find within a normal digging session`() {
+        val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
+
+        val quartzPeak = hitsPer10k(resolver, "nether_quartz", y = 60)
+
+        assertTrue(
+            quartzPeak > 25.0,
+            "nether_quartz 在 y60 峰值密度是 $quartzPeak/10k,太接近舊密度的量級(個位數到十幾/10k)," +
+                "換算成每 400 格才一次命中,一般挖礦曝露量根本碰不到",
+        )
+    }
+
+    @Test
+    fun `nether_gold peak is correctly at y15 (matching real vanilla generation), not the old wrong y60`() {
+        val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
+
+        val goldAtY15 = hitsPer10k(resolver, "nether_gold", y = 15)
+        val goldAtOldWrongY60 = hitsPer10k(resolver, "nether_gold", y = 60)
+
+        assertTrue(
+            goldAtY15 > 15.0,
+            "nether_gold 在真實峰值 y15 的密度是 $goldAtY15/10k,太低——peak 設對了但密度沒有跟上",
+        )
+        assertTrue(
+            goldAtY15 > goldAtOldWrongY60,
+            "nether_gold 在真實峰值 y15($goldAtY15/10k) 應該高於舊的錯誤峰值 y60($goldAtOldWrongY60/10k)," +
+                "否則 preferred_y 的修正沒有生效",
+        )
+    }
+
+    @Test
+    fun `nether_gold stays rarer than nether_quartz at their respective real peaks`() {
+        val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
+
+        val quartzPeak = hitsPer10k(resolver, "nether_quartz", y = 60)
+        val goldPeak = hitsPer10k(resolver, "nether_gold", y = 15)
+
+        assertTrue(
+            goldPeak < quartzPeak,
+            "nether_gold($goldPeak/10k) 應該仍比 nether_quartz($quartzPeak/10k) 稀有,符合原版兩者的相對稀有度",
+        )
+    }
 }
