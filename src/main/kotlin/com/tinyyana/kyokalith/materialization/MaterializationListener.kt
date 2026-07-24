@@ -18,12 +18,14 @@ import org.bukkit.event.entity.EntityChangeBlockEvent
 import org.bukkit.event.entity.EntityExplodeEvent
 
 /**
- * 把「天然方塊消失」的事件收斂到 MaterializationService.resolveRemoved,
+ * 把「天然方塊消失」的事件收斂到 MaterializationService.resolveRemovedSnapshots,
+ * 爆炸則走 resolveExplosionSnapshots，在掉落前連同 blockList 內方塊一起認證；
  * 「方塊被放入/生成」的事件收斂到 markDirty。
  *
  * 決算優先在事件當下、同一 tick 內(用 [Schedulers.atRegionNow])執行:目前執行緒已經
  * 擁有目標座標(Folia 上的 region owner、或 Spigot/Paper 的主執行緒——事件觸發時一律成立)
- * 就直接跑,只有跨 region 才退回下一 tick。這條路徑之所以安全,是因為
+ * 就直接跑。Folia handler 先驗證 target + 1 chunk 的讀取半徑都由目前 region 擁有;
+ * 不安全的單方塊/活塞事件取消,foreign explosion entries 留在世界。這條路徑之所以安全,是因為
  * MaterializationService.isNewlyExposed 只靠事件本身的 removedKeys 判定「即將透明」,
  * 不需要世界資料已經反映移除;拖到下一 tick 才決算,會讓誘餌真面目先被畫給客戶端看一次
  * (世界生成的埋藏誘餌本來就在 chunk 封包裡,移除擋住它的方塊後,用戶端會馬上依快取資料
@@ -40,9 +42,20 @@ class MaterializationListener(
     private val materialization: MaterializationService,
 ) : Listener {
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun guardBlockBreakRegion(event: BlockBreakEvent) {
+        if (!ownsExposureNeighborhood(event.block)) event.isCancelled = true
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
-        resolveLater(listOf(event.block))
+        val snapshot = RemovedBlockSnapshot(event.block, event.block.type.isOccluding)
+        runOwnedRegionNow(listOf(event.block)) {
+            if (!materialization.resolvePlayerBreak(snapshot)) {
+                event.isCancelled = true
+                plugin.logger.severe("Cancelled block break because the bounded materialization lock could not be persisted")
+            }
+        }
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -63,54 +76,136 @@ class MaterializationListener(
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityChangeBlock(event: EntityChangeBlockEvent) {
         if (event.to.isAir) {
-            resolveLater(listOf(event.block))
+            resolveNow(listOf(event.block)) {
+                event.isCancelled = true
+                logPersistenceFailure("entity block change")
+            }
         } else if (event.to in MaterializationService.BASE_BLOCKS) {
             markDirtyLater(event.block)
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun guardEntityChangeRegion(event: EntityChangeBlockEvent) {
+        if (event.to.isAir && !ownsExposureNeighborhood(event.block)) event.isCancelled = true
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityExplode(event: EntityExplodeEvent) {
-        resolveLater(event.blockList().toList())
+        resolveExplosionNow(event.blockList().toList()) {
+            event.isCancelled = true
+            logPersistenceFailure("entity explosion")
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun capEntityExplosion(event: EntityExplodeEvent) {
+        if (shouldCancelExplosion(event.blockList().size)) {
+            event.isCancelled = true
+            plugin.logger.warning(
+                "Cancelled explosion with ${event.blockList().size} blocks: " +
+                    "the fixed exposure cap is $MAX_EXPLOSION_BLOCKS_PER_EVENT",
+            )
+            return
+        }
+        filterExplosion(event.blockList())
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockExplode(event: BlockExplodeEvent) {
-        resolveLater(event.blockList().toList())
+        resolveExplosionNow(event.blockList().toList()) {
+            event.isCancelled = true
+            logPersistenceFailure("block explosion")
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun capBlockExplosion(event: BlockExplodeEvent) {
+        if (shouldCancelExplosion(event.blockList().size)) {
+            event.isCancelled = true
+            plugin.logger.warning(
+                "Cancelled explosion with ${event.blockList().size} blocks: " +
+                    "the fixed exposure cap is $MAX_EXPLOSION_BLOCKS_PER_EVENT",
+            )
+            return
+        }
+        filterExplosion(event.blockList())
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockBurn(event: BlockBurnEvent) {
-        resolveLater(listOf(event.block))
+        resolveNow(listOf(event.block)) {
+            event.isCancelled = true
+            logPersistenceFailure("block burn")
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun guardBlockBurnRegion(event: BlockBurnEvent) {
+        if (!ownsExposureNeighborhood(event.block)) event.isCancelled = true
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun guardPistonExtendRegion(event: BlockPistonExtendEvent) {
+        if (!ownsPistonNeighborhood(event.blocks, event.direction)) event.isCancelled = true
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onPistonExtend(event: BlockPistonExtendEvent) {
-        onPistonMove(event.blocks, event.direction)
+        onPistonMove(event.blocks, event.direction) {
+            event.isCancelled = true
+            logPersistenceFailure("piston extend")
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    fun guardPistonRetractRegion(event: BlockPistonRetractEvent) {
+        if (!ownsPistonNeighborhood(event.blocks, event.direction)) event.isCancelled = true
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onPistonRetract(event: BlockPistonRetractEvent) {
-        onPistonMove(event.blocks, event.direction)
+        onPistonMove(event.blocks, event.direction) {
+            event.isCancelled = true
+            logPersistenceFailure("piston retract")
+        }
     }
 
     /**
      * 活塞搬移:舊座標視為消失觸發決算(擋住「用活塞抽走覆蓋方塊、不觸發決算就看到誘餌」),
      * 新座標視為機制放置標 dirty。被其他搬移方塊回填的舊座標不透明,決算自然不會誤判。
      */
-    private fun onPistonMove(moved: List<Block>, direction: BlockFace) {
+    private fun onPistonMove(moved: List<Block>, direction: BlockFace, onFailure: () -> Unit) {
         if (moved.isEmpty()) return
         val destinations = moved.map { it.getRelative(direction) }
-        atFirstBlockRegion(moved) {
+        val snapshots = moved.map { RemovedBlockSnapshot(it, it.type.isOccluding) }
+        runOwnedRegionNow(moved) {
+            if (!materialization.resolveRemovedSnapshots(snapshots)) {
+                onFailure()
+                return@runOwnedRegionNow
+            }
             destinations.forEach { materialization.markDirty(it) }
-            materialization.resolveRemoved(moved)
         }
     }
 
-    /** 名稱沿用舊稱,但實際上優先同一 tick 執行,見 atFirstBlockRegion。 */
-    private fun resolveLater(removed: List<Block>) {
+    private fun resolveNow(removed: List<Block>, onFailure: () -> Unit) {
         if (removed.isEmpty()) return
-        atFirstBlockRegion(removed) { materialization.resolveRemoved(removed) }
+        val snapshots = removed.map { RemovedBlockSnapshot(it, it.type.isOccluding) }
+        runOwnedRegionNow(removed) {
+            if (!materialization.resolveRemovedSnapshots(snapshots)) onFailure()
+        }
+    }
+
+    private fun resolveExplosionNow(removed: List<Block>, onFailure: () -> Unit) {
+        if (removed.isEmpty()) return
+        val snapshots = removed.map { RemovedBlockSnapshot(it, it.type.isOccluding) }
+        runOwnedRegionNow(removed) {
+            if (!materialization.resolveExplosionSnapshots(snapshots)) onFailure()
+        }
+    }
+
+    private fun logPersistenceFailure(eventName: String) {
+        plugin.logger.severe("Cancelled $eventName because the bounded materialization lock could not be persisted")
     }
 
     /** 這裡沒有「即將透明」的 removedKeys 可以信任(只是標 dirty),維持原本的下一 tick 語意即可。 */
@@ -118,11 +213,46 @@ class MaterializationListener(
         Schedulers.atRegion(plugin, block.location) { materialization.markDirty(block) }
     }
 
-    /**
-     * 目前執行緒已經擁有 blocks.first() 的座標(事件觸發時的常態)就同一 tick 內直接跑,
-     * 避免下一 tick 才決算造成的可見閃爍;只有跨 region 的少見情形才退回下一 tick。
-     */
-    private fun atFirstBlockRegion(blocks: List<Block>, task: () -> Unit) {
+    private fun filterExplosion(blocks: MutableList<Block>) {
+        val crossRegion = retainOwnedBlocks(blocks, ::ownsExposureNeighborhood)
+        if (crossRegion > 0) {
+            plugin.logger.warning(
+                "Explosion block list was reduced to ${blocks.size}: " +
+                    "$crossRegion cross-region entries stayed in the world",
+            )
+        }
+    }
+
+    private fun ownsPistonNeighborhood(blocks: List<Block>, direction: BlockFace): Boolean =
+        blocks.all {
+            ownsExposureNeighborhood(it) &&
+                Schedulers.isOwnedByCurrentRegion(
+                    it.location.add(direction.modX.toDouble(), direction.modY.toDouble(), direction.modZ.toDouble()),
+                    EXPOSURE_READ_RADIUS_CHUNKS,
+                )
+        }
+
+    /** 六面曝露、8³完整 shape 與半徑4+一層 frontier 都落在 target 相鄰一個 chunk 內。 */
+    private fun ownsExposureNeighborhood(block: Block): Boolean =
+        Schedulers.isOwnedByCurrentRegion(block.location, EXPOSURE_READ_RADIUS_CHUNKS)
+
+    /** HIGHEST ownership guard 已驗證整批讀取半徑;這裡在同一 tick 的 owning region 執行。 */
+    private fun runOwnedRegionNow(blocks: List<Block>, task: () -> Unit) {
         Schedulers.atRegionNow(plugin, blocks.first().location) { task() }
+    }
+
+    companion object {
+        const val MAX_EXPLOSION_BLOCKS_PER_EVENT = 512
+        private const val EXPOSURE_READ_RADIUS_CHUNKS = 1
+
+        fun shouldCancelExplosion(size: Int): Boolean = size > MAX_EXPLOSION_BLOCKS_PER_EVENT
+
+        /** Keeps foreign Folia-region entries in the world instead of reading them from the wrong thread. */
+        fun <T> retainOwnedBlocks(blocks: MutableList<T>, owns: (T) -> Boolean): Int {
+            val before = blocks.size
+            blocks.removeAll { !owns(it) }
+            return before - blocks.size
+        }
+
     }
 }

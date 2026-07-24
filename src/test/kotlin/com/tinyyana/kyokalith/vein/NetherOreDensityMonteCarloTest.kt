@@ -7,10 +7,8 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * 校準回歸測試:直接載入實際出貨的 `config.yml`(不是手抄一份副本),對地獄各礦種的
- * 決定性礦脈函數做大量座標抽樣,量測「每一萬個抽樣座標的命中數」,並斷言 ancient_debris
- * 的密度落在「比 nether_quartz/nether_gold 自己的密度峰值明顯稀有,但不再是趨近於零」的
- * 範圍——這正是本次校準要修的東西(見 commit message 的完整推導與前後對照數字)。
+ * 出貨 config 的固定 Y 層密度守門。礦脈大小、連通元件、間距與 distinct encounters
+ * 由 [OreDistributionMetricsTest] 覆蓋;這裡只負責 Y9/Y15/Y60 的 hits/10k 與稀有度比例。
  *
  * f 是純函數(固定 salt + 座標 → 固定結果),這裡的「Monte Carlo」抽樣本身是完全決定性、
  * 可重現的,不是真隨機——同一份 config.yml 永遠量出同一組數字,沒有測試 flaky 的疑慮,
@@ -20,9 +18,8 @@ import kotlin.test.assertTrue
  * 即 360,000 個座標):
  * - 校準前(cell_chance=0.006, vein_size_max=2):ancient_debris y8=0.14/10k、y15=0.056/10k、
  *   y22=0.0/10k——y8-22 這段實質上是零,這是玩家回報「Y9 附近幾乎挖不到資源」的根因。
- * - 校準後(cell_chance=0.05, vein_size_max=3):ancient_debris y15=0.81/10k,約為校準前的
- *   14 倍;nether_quartz 在它自己的密度峰值(y60)量到 9.17/10k——校準後的 ancient_debris
- *   仍只有 quartz 峰值的 ~9%,維持「遠比常見地獄礦稀有」但不再趨近於零。
+ * 1.3.3 改用 8³ cell 後，玩家隧道遭遇率由 [OreDistributionMetricsTest] 另行守門；
+ * 這裡的密度上限也同步改為新量測範圍，避免拿 1.3.2 的低密度門檻凍結舊回歸。
  */
 class NetherOreDensityMonteCarloTest {
 
@@ -94,56 +91,49 @@ class NetherOreDensityMonteCarloTest {
     }
 
     /**
-     * 2026-07-24 第二輪校準:RCON 排查證明「決算→上鎖→setType」這條核心邏輯本身沒有壞(手動
-     * 觸發 `MaterializationService.resolveRemoved`,走跟真實 BlockBreakEvent/EntityExplodeEvent
-     * 完全相同的路徑,虛擬座標正確變成預測的礦、正確寫入 materialized_positions)——問題是密度
-     * 太低*且* nether_gold 的 `preferred_y` 本身設錯:原本兩者都設 60,但 Yana 查證原版真實生成
-     * 資料後確認地獄金礦實際峰值在 Y=15(離地面近),不是 Y=60。石英礦原版接近整段常見,沒有明顯
-     * 單一峰值,peak 維持在範圍中段即可。密度部分:`cell_chance=0.045` 換算約每 300~1000 格才一次
-     * 命中,一般玩家一次挖礦/炸礦的曝露量遠遠不到這個量級,體感等於挖不到。石英拉到 0.28(同時
-     * `vein_size_max` 10→14 對齊原版「單簇最大 14 格」)、金礦拉到 0.11(peak 移到 y15 後量測)。
+     * 1.3.3 用較密的 8³ 候選與較小礦脈恢復遭遇率；0.6% 仍是嚴格的方塊密度上限。
      */
     @Test
-    fun `nether_quartz peak density is high enough to find within a normal digging session`() {
+    fun `nether_quartz uniform band density is nontrivial and controlled`() {
         val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
 
-        val quartzPeak = hitsPer10k(resolver, "nether_quartz", y = 60)
+        val quartzAtY15 = hitsPer10k(resolver, "nether_quartz", y = 15)
+        val quartzAtY60 = hitsPer10k(resolver, "nether_quartz", y = 60)
 
         assertTrue(
-            quartzPeak > 25.0,
-            "nether_quartz 在 y60 峰值密度是 $quartzPeak/10k,太接近舊密度的量級(個位數到十幾/10k)," +
-                "換算成每 400 格才一次命中,一般挖礦曝露量根本碰不到",
+            quartzAtY15 in 20.0..60.0 && quartzAtY60 in 20.0..60.0,
+            "nether_quartz 的均勻帶失控:y15=$quartzAtY15/10k,y60=$quartzAtY60/10k",
         )
     }
 
     @Test
-    fun `nether_gold peak is correctly at y15 (matching real vanilla generation), not the old wrong y60`() {
+    fun `nether_gold stays present across its uniform band without overtaking quartz`() {
         val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
 
+        val quartzAtY15 = hitsPer10k(resolver, "nether_quartz", y = 15)
+        val quartzAtY60 = hitsPer10k(resolver, "nether_quartz", y = 60)
         val goldAtY15 = hitsPer10k(resolver, "nether_gold", y = 15)
-        val goldAtOldWrongY60 = hitsPer10k(resolver, "nether_gold", y = 60)
+        val goldAtY60 = hitsPer10k(resolver, "nether_gold", y = 60)
 
         assertTrue(
-            goldAtY15 > 15.0,
-            "nether_gold 在真實峰值 y15 的密度是 $goldAtY15/10k,太低——peak 設對了但密度沒有跟上",
+            goldAtY15 in 8.0..35.0 && goldAtY60 in 8.0..35.0,
+            "nether_gold 的均勻帶失控:y15=$goldAtY15/10k,y60=$goldAtY60/10k",
         )
         assertTrue(
-            goldAtY15 > goldAtOldWrongY60,
-            "nether_gold 在真實峰值 y15($goldAtY15/10k) 應該高於舊的錯誤峰值 y60($goldAtOldWrongY60/10k)," +
-                "否則 preferred_y 的修正沒有生效",
+            goldAtY15 < quartzAtY15 && goldAtY60 < quartzAtY60,
+            "nether_gold 應比同層 quartz 稀有:y15=$goldAtY15/$quartzAtY15,y60=$goldAtY60/$quartzAtY60",
         )
     }
 
     @Test
-    fun `nether_gold stays rarer than nether_quartz at their respective real peaks`() {
+    fun `y9 y15 y60 preserve nether ranges and ancient debris rarity`() {
         val resolver = OreVeinResolver("monte-carlo-calibration-salt", bundledOreRegistry())
 
-        val quartzPeak = hitsPer10k(resolver, "nether_quartz", y = 60)
-        val goldPeak = hitsPer10k(resolver, "nether_gold", y = 15)
-
-        assertTrue(
-            goldPeak < quartzPeak,
-            "nether_gold($goldPeak/10k) 應該仍比 nether_quartz($quartzPeak/10k) 稀有,符合原版兩者的相對稀有度",
-        )
+        assertTrue(hitsPer10k(resolver, "nether_quartz", y = 9) == 0.0, "quartz 在 y_min=10 下方不可出現")
+        assertTrue(hitsPer10k(resolver, "nether_gold", y = 9) == 0.0, "nether_gold 在 y_min=10 下方不可出現")
+        listOf(9, 15, 60).forEach { y ->
+            val debris = hitsPer10k(resolver, "ancient_debris", y)
+            assertTrue(debris in 0.1..3.0, "ancient_debris y=$y 應明顯稀有但不可趨近零:$debris/10k")
+        }
     }
 }

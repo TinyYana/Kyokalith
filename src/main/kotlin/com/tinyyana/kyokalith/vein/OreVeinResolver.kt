@@ -13,18 +13,16 @@ data class OreResult(
     val priority: Int,
 )
 
-/** 候選球的幾何範圍,供呼叫端(MaterializationService)判斷「另一個座標是否屬於同一顆礦脈」。 */
-data class VeinBall(val ox: Int, val oy: Int, val oz: Int, val radius: Int) {
-    fun contains(x: Int, y: Int, z: Int): Boolean {
-        val dx = x - ox
-        val dy = y - oy
-        val dz = z - oz
-        return dx * dx + dy * dy + dz * dz <= radius * radius
-    }
+data class VeinPosition(val x: Int, val y: Int, val z: Int)
+
+/** 一顆 veinId 的完整、嚴格有界形狀。 */
+data class VeinShape(val positions: Set<VeinPosition>) {
+    val blockCount: Int get() = positions.size
+    fun contains(x: Int, y: Int, z: Int): Boolean = VeinPosition(x, y, z) in positions
 }
 
-/** [resolve] 的完整版本,額外附上贏得該座標的候選球幾何(見 [VeinBall])。 */
-data class ResolvedVein(val result: OreResult, val ball: VeinBall)
+/** [resolve] 的完整版本,額外附上贏得該座標的完整礦脈形狀。 */
+data class ResolvedVein(val result: OreResult, val shape: VeinShape)
 
 /**
  * 決定性礦脈函數,只做純計算;不讀寫世界、不碰資料庫。
@@ -33,6 +31,24 @@ class OreVeinResolver(
     private val salt: String,
     private val registry: OreRegistry,
 ) {
+    /** 裸露原生礦只提供入口；後方延續大小與走向仍由私有 salt 決定，不沿用可由世界 seed 預測的形狀。 */
+    fun worldgenContinuationSize(world: String, epoch: Int, oreType: String, origin: VeinPosition): Int {
+        val ore = requireNotNull(registry[oreType]) { "unknown ore type: $oreType" }
+        val seed = stableHash64("$salt|worldgen|$world|$epoch|$oreType|${origin.x}|${origin.y}|${origin.z}")
+        return ore.veinSizeMin + positiveMod(seed, ore.veinSizeMax - ore.veinSizeMin + 1)
+    }
+
+    fun worldgenContinuationRank(
+        world: String,
+        epoch: Int,
+        oreType: String,
+        origin: VeinPosition,
+        position: VeinPosition,
+    ): Long = stableHash64(
+        "$salt|worldgen-rank|$world|$epoch|$oreType|${origin.x}|${origin.y}|${origin.z}|" +
+            "${position.x}|${position.y}|${position.z}",
+    )
+
     /**
      * cell 幾何快取(§8.5)。key 已含 epoch,chunk 重生後舊 epoch 的 entry 自然變成死條目,
      * 靠 LRU 淘汰即可,不需要主動失效。快取遺失不影響正確性,只是重新算一次。
@@ -56,9 +72,8 @@ class OreVeinResolver(
     ): OreResult? = resolveDetailed(world, epoch, x, y, z, baseMaterial, dimension)?.result
 
     /**
-     * 決算並附上贏得該座標的候選球幾何(見 [VeinBall])——鎖定 5×5×5 局部鄰域時(見
-     * MaterializationService),用同一顆候選球對鄰居座標做 contains 判斷,不需要重新從
-     * cell 幾何反推「這是不是同一顆礦脈」。
+     * 決算並附上贏得該座標的完整礦脈形狀，讓 MaterializationService 在首次命中時
+     * 一次鎖定完整 veinId，而不是靠移動視窗逐段推進。
      *
      * 跨礦種重疊時,依 [OreDefinition.priority] 由大到小排序決定贏家;priority 相同才退回
      * veinId 字典序(僅用於讓結果穩定可重現,無維運意義)。
@@ -76,38 +91,99 @@ class OreVeinResolver(
             if (ore.dimension != dimension) return@mapNotNull null
             val material = materialForBase(ore, baseMaterial) ?: return@mapNotNull null
             if (y !in ore.yMin..ore.yMax) return@mapNotNull null
-            hitForOre(world, epoch, x, y, z, ore)?.let { hit ->
+            hitForOre(world, epoch, x, y, z, baseMaterial, ore)?.let { hit ->
                 hit.copy(result = hit.result.copy(material = material))
             }
         }
         return hits
             .sortedWith(compareByDescending<OreHit> { it.result.priority }.thenBy { it.result.veinId })
             .firstOrNull()
-            ?.let { ResolvedVein(it.result, it.ball) }
+            ?.let { ResolvedVein(it.result, it.shape) }
     }
 
-    private data class OreHit(val result: OreResult, val ball: VeinBall)
+    private data class OreHit(val result: OreResult, val shape: VeinShape)
 
-    private fun hitForOre(world: String, epoch: Int, x: Int, y: Int, z: Int, ore: OreDefinition): OreHit? {
+    private fun hitForOre(
+        world: String,
+        epoch: Int,
+        x: Int,
+        y: Int,
+        z: Int,
+        baseMaterial: String,
+        ore: OreDefinition,
+    ): OreHit? {
         val cellX = floorCell(x)
         val cellY = floorCell(y)
         val cellZ = floorCell(z)
-        var best: OreHit? = null
-        for (dx in -1..1) {
-            for (dy in -1..1) {
-                for (dz in -1..1) {
-                    val candidate = candidateFromCell(world, epoch, cellX + dx, cellY + dy, cellZ + dz, ore)
-                    if (candidate.contains(x, y, z)) {
-                        val hit = OreHit(
-                            OreResult(ore.oreType, "", candidate.id, ore.priority),
-                            VeinBall(candidate.ox, candidate.oy, candidate.oz, candidate.radius),
-                        )
-                        if (best == null || hit.result.veinId < best.result.veinId) best = hit
-                    }
-                }
-            }
+        val candidate = candidateFromCell(world, epoch, cellX, cellY, cellZ, ore)
+        if (!candidate.contains(x, y, z) ||
+            !isAcceptedSameOre(world, epoch, cellX, cellY, cellZ, ore, candidate) ||
+            !winsCrossOreArbitration(world, epoch, cellX, cellY, cellZ, baseMaterial, ore, candidate)
+        ) {
+            return null
         }
-        return best
+        return OreHit(
+            OreResult(ore.oreType, "", candidate.id, ore.priority),
+            VeinShape(candidate.positions),
+        )
+    }
+
+    /**
+     * 每個 cell 最多一顆候選。相鄰 cell 的同礦種形狀若六面相連,只保留 veinId 較小者;
+     * 因此任何最終同礦種連通元件都只可能包含一個 veinId。
+     */
+    private fun isAcceptedSameOre(
+        world: String,
+        epoch: Int,
+        cellX: Int,
+        cellY: Int,
+        cellZ: Int,
+        ore: OreDefinition,
+        candidate: CandidateVein,
+    ): Boolean =
+        CELL_NEIGHBORS.none { (dx, dy, dz) ->
+            val other = candidateFromCell(world, epoch, cellX + dx, cellY + dy, cellZ + dz, ore)
+            other.id < candidate.id && candidate.touches(other)
+        }
+
+    /**
+     * 跨礦種 priority 以整顆形狀為單位仲裁。若只覆蓋重疊座標，原本連通的低 priority
+     * 礦脈可能被削成玩家只挖到 1–2 格的殘片；整顆淘汰可保證每個存活 veinId 仍完整連通。
+     * 所有形狀都限制在自己的 cell，因此只需比較同一個 cell 的其他礦種候選。
+     */
+    private fun winsCrossOreArbitration(
+        world: String,
+        epoch: Int,
+        cellX: Int,
+        cellY: Int,
+        cellZ: Int,
+        baseMaterial: String,
+        ore: OreDefinition,
+        candidate: CandidateVein,
+    ): Boolean {
+        val contenders = registry.enabled()
+            .asSequence()
+            .filter { it.dimension == ore.dimension }
+            .filter { materialForBase(it, baseMaterial) != null }
+            .map { otherOre ->
+                otherOre to candidateFromCell(world, epoch, cellX, cellY, cellZ, otherOre)
+            }
+            .filter { (otherOre, other) ->
+                other.positions.isNotEmpty() &&
+                    isAcceptedSameOre(world, epoch, cellX, cellY, cellZ, otherOre, other)
+            }
+            .sortedWith(
+                compareByDescending<Pair<OreDefinition, CandidateVein>> { it.first.priority }
+                    .thenBy { it.second.id },
+            )
+
+        val accepted = ArrayList<CandidateVein>()
+        contenders.forEach { (otherOre, other) ->
+            if (accepted.any(other::overlaps)) return@forEach
+            if (otherOre.oreType == ore.oreType && other.id == candidate.id) return true
+            accepted += other
+        }
+        return false
     }
 
     private fun candidateFromCell(
@@ -135,24 +211,83 @@ class OreVeinResolver(
     ): CandidateVein {
         val key = "$salt|$world|$epoch|${ore.oreType}|$cellX|$cellY|$cellZ"
         val seed = stableHash64(key)
-        val cellCenterY = cellY * CELL_SIZE + CELL_SIZE / 2
-        val weight = yWeight(cellCenterY, ore)
-        val active = unit(seed) < (ore.cellChance * ore.density * weight).coerceIn(0.0, 1.0)
+        val id = seed.toULong().toString(16)
+
+        val cellMinY = cellY * CELL_SIZE
+        val allowedMinY = max(cellMinY, ore.yMin)
+        val allowedMaxY = minOf(cellMinY + CELL_SIZE - 1, ore.yMax)
+        if (allowedMinY > allowedMaxY) return CandidateVein(emptySet(), id)
+
+        val origin = VeinPosition(
+            cellX * CELL_SIZE + positiveMod(mix(seed, 2), CELL_SIZE),
+            allowedMinY + positiveMod(mix(seed, 3), allowedMaxY - allowedMinY + 1),
+            cellZ * CELL_SIZE + positiveMod(mix(seed, 4), CELL_SIZE),
+        )
+        val cellFill = (allowedMaxY - allowedMinY + 1).toDouble() / CELL_SIZE
+        val active = unit(seed) <
+            (ore.cellChance * ore.density * yWeight(origin.y, ore) * cellFill).coerceIn(0.0, 1.0)
+        if (!active) return CandidateVein(emptySet(), id)
+
         val size = ore.veinSizeMin + positiveMod(mix(seed, 1), ore.veinSizeMax - ore.veinSizeMin + 1)
-        val ox = cellX * CELL_SIZE + positiveMod(mix(seed, 2), CELL_SIZE)
-        val oy = cellY * CELL_SIZE + positiveMod(mix(seed, 3), CELL_SIZE)
-        val oz = cellZ * CELL_SIZE + positiveMod(mix(seed, 4), CELL_SIZE)
-        // 硬上限,避免 config 誤設過大的 vein_size_max 時單一 cell 產生失控大礦脈。
-        val radius = max(1, size / 2).coerceAtMost(MAX_VEIN_RADIUS)
-        return CandidateVein(active, ox, oy, oz, radius, seed.toULong().toString(16))
+        return CandidateVein(growShape(seed, origin, size, cellX, cellZ, allowedMinY, allowedMaxY), id)
     }
 
-    /**
-     * 三角分布權重,在 preferredY 為 1.0,往 y_min/y_max 兩端線性遞減到 0——
-     * 原本 cell_chance 對整個 y_min..y_max 範圍套用同一機率,範圍動輒 300+ 格,
-     * 導致礦物在任何單一 Y 層的密度都遠低於原版,且完全不會像原版一樣在特定深度形成礦帶。
-     */
+    /** 決定性 frontier growth:每次只從既有方塊的六面鄰居擴張,所以形狀永遠連通且恰為 size 格。 */
+    private fun growShape(
+        seed: Long,
+        origin: VeinPosition,
+        size: Int,
+        cellX: Int,
+        cellZ: Int,
+        allowedMinY: Int,
+        allowedMaxY: Int,
+    ): Set<VeinPosition> {
+        val cellMinX = cellX * CELL_SIZE
+        val cellMinZ = cellZ * CELL_SIZE
+        val selected = linkedSetOf(origin)
+        val frontier = HashSet<VeinPosition>()
+
+        fun addFrontier(position: VeinPosition) {
+            BLOCK_NEIGHBORS.forEach { (dx, dy, dz) ->
+                val next = VeinPosition(position.x + dx, position.y + dy, position.z + dz)
+                if (next.x !in cellMinX until cellMinX + CELL_SIZE ||
+                    next.y !in allowedMinY..allowedMaxY ||
+                    next.z !in cellMinZ until cellMinZ + CELL_SIZE ||
+                    next in selected
+                ) {
+                    return@forEach
+                }
+                frontier += next
+            }
+        }
+
+        addFrontier(origin)
+        while (selected.size < size) {
+            val next = frontier.minWithOrNull(
+                compareBy<VeinPosition> { mix(seed, packedLocal(it.x, it.y, it.z)) }
+                    .thenBy { it.x }
+                    .thenBy { it.y }
+                    .thenBy { it.z },
+            ) ?: error("vein_size=$size 超過單一 cell 可生成的形狀容量")
+            frontier.remove(next)
+            selected += next
+            addFrontier(next)
+        }
+        return selected
+    }
+
+    /** bundled ores 可用分段線性曲線表達雙峰/平台/均勻分布;舊 config 仍退回單峰三角形。 */
     private fun yWeight(y: Int, ore: OreDefinition): Double {
+        val points = ore.yWeightPoints
+        if (points.isNotEmpty()) {
+            if (y <= points.first().y) return points.first().weight
+            if (y >= points.last().y) return points.last().weight
+            val rightIndex = points.indexOfFirst { it.y >= y }
+            val left = points[rightIndex - 1]
+            val right = points[rightIndex]
+            val progress = (y - left.y).toDouble() / (right.y - left.y)
+            return left.weight + (right.weight - left.weight) * progress
+        }
         val half = max(max(ore.preferredY - ore.yMin, ore.yMax - ore.preferredY), 1)
         val distance = Math.abs(y - ore.preferredY)
         return (1.0 - distance.toDouble() / half).coerceIn(0.0, 1.0)
@@ -166,20 +301,19 @@ class OreVeinResolver(
         }
 
     private data class CandidateVein(
-        val active: Boolean,
-        val ox: Int,
-        val oy: Int,
-        val oz: Int,
-        val radius: Int,
+        val positions: Set<VeinPosition>,
         val id: String,
     ) {
-        fun contains(x: Int, y: Int, z: Int): Boolean {
-            if (!active) return false
-            val dx = x - ox
-            val dy = y - oy
-            val dz = z - oz
-            return dx * dx + dy * dy + dz * dz <= radius * radius
-        }
+        fun contains(x: Int, y: Int, z: Int): Boolean = VeinPosition(x, y, z) in positions
+
+        fun touches(other: CandidateVein): Boolean =
+            positions.any { position ->
+                BLOCK_NEIGHBORS.any { (dx, dy, dz) ->
+                    VeinPosition(position.x + dx, position.y + dy, position.z + dz) in other.positions
+                }
+            }
+
+        fun overlaps(other: CandidateVein): Boolean = positions.any(other.positions::contains)
     }
 
     private data class CellKey(
@@ -192,27 +326,28 @@ class OreVeinResolver(
     )
 
     companion object {
-        private const val CELL_SIZE = 16
-        private const val CELL_CACHE_MAX_ENTRIES = 200_000
-
         /**
-         * 半徑上限。2026-07-24 從 2 提高到 4:半徑 2(球體 33 格)讓 `vein_size_max` 一旦設到
-         * 6 以上(bundled config 的 coal/iron/copper/gold/redstone/lapis/diamond/nether_quartz/
-         * nether_gold 全部是 7~10)全部被砍到同一顆 33 格小球,不管玩家設 7 還是 10 感受不出差異,
-         * 也是「挖到一顆礦後續全變石頭」體感的主因之一——礦脈物理範圍太小,一下就挖穿。
-         *
-         * 半徑 4 球體約 257 格(dx²+dy²+dz²<=16 的整數點數),仍遠低於半徑 5(約 515 格,§19
-         * 記錄過的「一顆礦脈吃掉整片區域」舊 bug 量級),同時讓 vein_size 1~10 的整數除法
-         * (`size/2`)在 1~4 之間有實際區隔(1~3→1,4~5→2,6~7→3,8~10→4),不再是 4 以上
-         * 全部收斂成同一個數字。想要更大的礦場範圍,調高的是 `cell_chance`/`density`(讓礦脈
-         * 更常出現),不是這個半徑上限——理由與 docs/CONFIG.md 既有的紅線一致,只是把「多小
-         * 算小」的門檻放寬,不是移除門檻。
+         * 8³ cell 讓小礦脈能更常出現；若維持 16³，即使 cell_chance=1，沿直線挖掘仍會
+         * 因候選中心太疏而出現極長空窗。8 可整除 chunk 寬度，跨 chunk/負座標語意不變。
          */
-        private const val MAX_VEIN_RADIUS = 4
+        private const val CELL_SIZE = 8
+        // Shapes carry up to 32 positions; keep the old cache from multiplying that object graph without bound.
+        private const val CELL_CACHE_MAX_ENTRIES = 20_000
+
+        private val CELL_NEIGHBORS = listOf(
+            Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 1, 0),
+            Triple(0, -1, 0), Triple(0, 0, 1), Triple(0, 0, -1),
+        )
+        private val BLOCK_NEIGHBORS = CELL_NEIGHBORS
 
         private fun floorCell(value: Int): Int = Math.floorDiv(value, CELL_SIZE)
 
         private fun positiveMod(value: Long, modulus: Int): Int = Math.floorMod(value, modulus.toLong()).toInt()
+
+        private fun packedLocal(x: Int, y: Int, z: Int): Long =
+            ((Math.floorMod(x, CELL_SIZE) shl 8) or
+                (Math.floorMod(y, CELL_SIZE) shl 4) or
+                Math.floorMod(z, CELL_SIZE)).toLong() + 5
 
         private fun unit(value: Long): Double = (value ushr 11).toDouble() / (1L shl 53).toDouble()
 

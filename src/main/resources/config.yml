@@ -9,6 +9,7 @@
 # Files under plugins/Kyokalith/lang/<locale>.yml override the bundled text key-by-key;
 # add your own lang/<name>.yml and point locale at it for a custom language.
 locale: zh_TW
+config_schema_version: 2
 
 database:
   file: kyokalith.db
@@ -19,61 +20,71 @@ database:
 # Ore types with enabled: false are fully ignored: decoys stay vanilla, mining is vanilla,
 # and no OreCheckTriggerEvent fires.
 #
-# priority (Int, default 0): tie-break when two different ore types both resolve a hit at the
-# same coordinate (overlapping candidate spheres). Higher priority wins. This replaces an old
-# hash-based (veinId) tie-break that had no operational meaning — with priority, "diamond beat
-# coal here" is explainable and shows up in `/kyo inspect`. Same-ore-type overlaps (two cells of
-# the *same* ore covering one block) are unaffected by this — the material is identical either
-# way. Bundled defaults follow vanilla rarity tiers: common ores are low, rare ores are high, so
-# a rare ore always wins when its sphere overlaps a common one's.
+# priority (Int, default 0): whole-shape tie-break when different ore candidates overlap.
+# Higher priority keeps its complete face-connected vein; the loser is discarded completely
+# instead of leaving 1–2 block fragments. Equal priority falls back to stable veinId order.
+# Same-ore shapes from adjacent cells are also never allowed to touch: the lower veinId survives,
+# giving every component a hard endpoint. The winner and priority show up in `/kyo inspect`.
 ores:
-  # 2026-07-24 第二輪校準:Yana 直接查證原版真實生成資料,以下逐項對照修正 y_min/y_max/
-  # preferred_y(密度 cell_chance/vein_size 沒有一併對照原版數字,原版沒有直接對應這套模型的
-  # 「每萬格命中率」概念,維持既有值,只修正被證實設錯的範圍/峰值)。
+  # y_weight_points is an optional piecewise-linear activation curve. Bundled curves reproduce
+  # vanilla-like double peaks, plateaus, uniform bands and mixed peak+background distributions.
+  # Custom configs without it keep the legacy triangular preferred_y behavior.
   coal:
     enabled: true
     materials:
       stone: COAL_ORE
       deepslate: DEEPSLATE_COAL_ORE
-    # 原版:Y=0~256,Y=136 以上的高山最多,Y=0 以下不再生成——y_max 320→256、
-    # preferred_y 96→192(貼近「高山」帶,不是原本錯設的中段)。
+    # Vanilla-like: Y=0~320, strong around Y=96 and a high-altitude plateau above Y=136.
     y_min: 0
-    y_max: 256
-    preferred_y: 192
+    y_max: 320
+    preferred_y: 96
+    y_weight_points:
+      - { y: 0, weight: 0.0 }
+      - { y: 96, weight: 0.65 }
+      - { y: 136, weight: 1.0 }
+      - { y: 320, weight: 1.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 10
-    cell_chance: 0.045
+    vein_size_min: 3
+    vein_size_max: 7
+    cell_chance: 0.28
     priority: 10
   iron:
     enabled: true
     materials:
       stone: IRON_ORE
       deepslate: DEEPSLATE_IRON_ORE
-    # 原版:Y=-64~320,Y=16 或高山 Y=232 兩處最常見(雙峰,這套模型只支援單峰三角分布)——
-    # y_max 256→320 對齊真實上限;peak 保留在 Y=16(深板岩大型鐵礦脈也在這一段,原本就對)。
+    # Vanilla-like double peak at Y=16 and Y=232.
     y_min: -64
     y_max: 320
     preferred_y: 16
+    y_weight_points:
+      - { y: -64, weight: 0.10 }
+      - { y: 16, weight: 1.0 }
+      - { y: 96, weight: 0.20 }
+      - { y: 232, weight: 1.0 }
+      - { y: 320, weight: 0.10 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 9
-    cell_chance: 0.038
+    vein_size_min: 3
+    vein_size_max: 7
+    cell_chance: 0.28
     priority: 20
   copper:
     enabled: true
     materials:
       stone: COPPER_ORE
       deepslate: DEEPSLATE_COPPER_ORE
-    # 原版:Y=-64~112,Y=48 最常見(滴水溶洞生物群系加倍,這套模型沒有生物群系概念,略過)——
-    # y_min 原本錯設成 -16,改回 -64;peak(48)原本就對。
-    y_min: -64
+    # Vanilla-like: Y=-16~112, peak Y=48. Dripstone biome bonus is not modeled.
+    y_min: -16
     y_max: 112
     preferred_y: 48
+    y_weight_points:
+      - { y: -16, weight: 0.0 }
+      - { y: 48, weight: 1.0 }
+      - { y: 112, weight: 0.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 10
-    cell_chance: 0.030
+    vein_size_min: 3
+    vein_size_max: 8
+    cell_chance: 0.24
     priority: 15
   gold:
     enabled: true
@@ -85,10 +96,14 @@ ores:
     y_min: -64
     y_max: 32
     preferred_y: -16
+    y_weight_points:
+      - { y: -64, weight: 0.0 }
+      - { y: -16, weight: 1.0 }
+      - { y: 32, weight: 0.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 9
-    cell_chance: 0.018
+    vein_size_min: 2
+    vein_size_max: 6
+    cell_chance: 0.17
     priority: 40
   redstone:
     enabled: true
@@ -97,12 +112,16 @@ ores:
       deepslate: DEEPSLATE_REDSTONE_ORE
     # 原版:Y=-64~16,跟鑽石一樣在 Y=-59 最常見——原本 preferred_y 錯設成 -32,改成 -59。
     y_min: -64
-    y_max: 16
+    y_max: 15
     preferred_y: -59
+    y_weight_points:
+      - { y: -64, weight: 1.0 }
+      - { y: -59, weight: 1.0 }
+      - { y: 15, weight: 0.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 8
-    cell_chance: 0.027
+    vein_size_min: 3
+    vein_size_max: 7
+    cell_chance: 0.20
     priority: 30
   lapis:
     enabled: true
@@ -112,10 +131,14 @@ ores:
     y_min: -64
     y_max: 64
     preferred_y: 0
+    y_weight_points:
+      - { y: -64, weight: 0.0 }
+      - { y: 0, weight: 1.0 }
+      - { y: 64, weight: 0.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 7
-    cell_chance: 0.021
+    vein_size_min: 2
+    vein_size_max: 5
+    cell_chance: 0.17
     priority: 35
   diamond:
     enabled: true
@@ -125,81 +148,69 @@ ores:
     y_min: -64
     y_max: 16
     preferred_y: -59
+    y_weight_points:
+      - { y: -64, weight: 1.0 }
+      - { y: -59, weight: 1.0 }
+      - { y: 16, weight: 0.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 8
-    cell_chance: 0.027
+    vein_size_min: 2
+    vein_size_max: 5
+    cell_chance: 0.09
     priority: 70
   emerald:
     enabled: true
     materials:
       stone: EMERALD_ORE
       deepslate: DEEPSLATE_EMERALD_ORE
-    # 原版:Y=-16~256,只限山地生物群系,位置越高機率越大(單向遞增,不是中段最多)——這套模型
-    # 只支援三角分布峰值,peak 224→256(=y_max)最貼近「越高越常見」;生物群系限制沒有對應概念,略過。
+    # Vanilla-like mountain band: Y=-16~320, peak around Y=232. Biome gating is not modeled.
     y_min: -16
-    y_max: 256
-    preferred_y: 256
+    y_max: 320
+    preferred_y: 232
+    y_weight_points:
+      - { y: -16, weight: 0.0 }
+      - { y: 232, weight: 1.0 }
+      - { y: 320, weight: 0.70 }
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 3
-    cell_chance: 0.009
+    vein_size_max: 2
+    cell_chance: 0.035
     priority: 80
-  # 2026-07-24 第二輪校準(見 KyokalithTestPlan/commit message 完整推導):Yana 實機回報「地獄挖
-  # 普通地獄石,挖的炸的都挖不到」——RCON 排查(手動觸發 MaterializationService.resolveRemoved,
-  # 走跟真實事件完全相同的路徑)證明決算/上鎖/setType 這條核心邏輯本身沒有壞,問題是密度*與*
-  # y_min/y_max/preferred_y 設定本身不準:cell_chance=0.045 在(錯誤地)設成峰值的 y60 量到的
-  # 命中率只有個位數到十幾/10k,換算約每 300~1000 格才有一次命中——不是「稀有」而是「幾乎抽不到」。
-  # Yana 直接查證原版真實生成資料予以修正:①下界石英礦「Y=0~127,Y10-114 最常見(玄武岩三角洲
-  # 加倍,沒有生物群系概念,略過),每區塊 16 次生成嘗試、單簇最大 14 格」——y_min/y_max 10~117
-  # 改成 0~127 對齊真實上下限,原版在這段幾乎沒有明顯的單一 Y 峰值(近乎整段常見),peak 維持在
-  # 範圍中段;`vein_size_max` 10→14 直接對齊「單簇最大 14 格」,`cell_chance` 大幅拉高反映
-  # 「16 次/區塊」的高頻;②下界金礦「Y=0~127,Y15 最常見」——`preferred_y: 60` 原本是設定本身
-  # 的錯誤(不是密度問題),金礦峰值離地面近,不是離地面遠,改成 `preferred_y: 15` 才對得上原版
-  # 真實分布,y_min/y_max 同步改成 0~127,`cell_chance` 也一併拉高。地獄本身天然洞穴多,新曝露的
-  # 機會比地上少,同樣密度換算成「玩家實際找到的機率」會比地上更吃虧,拉高幅度因此比單純對齊原版
-  # 數字再更寬鬆一些。
+  # Nether quartz/gold are uniform in Y=10~117; the listed Y15/Y114 mining levels are safe
+  # routes rather than probability peaks. Biome multipliers are not modeled.
   nether_quartz:
     enabled: true
     dimension: NETHER
     materials:
       stone: NETHER_QUARTZ_ORE
-    y_min: 0
-    y_max: 127
-    preferred_y: 60
+    y_min: 10
+    y_max: 117
+    preferred_y: 15
+    y_weight_points:
+      - { y: 10, weight: 1.0 }
+      - { y: 117, weight: 1.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 14
-    cell_chance: 0.28
+    vein_size_min: 4
+    vein_size_max: 9
+    cell_chance: 0.42
     priority: 10
   nether_gold:
     enabled: true
     dimension: NETHER
     materials:
       stone: NETHER_GOLD_ORE
-    y_min: 0
-    y_max: 127
+    y_min: 10
+    y_max: 117
     preferred_y: 15
+    y_weight_points:
+      - { y: 10, weight: 1.0 }
+      - { y: 117, weight: 1.0 }
     density: 1.0
-    vein_size_min: 1
-    vein_size_max: 10
-    cell_chance: 0.11
+    vein_size_min: 3
+    vein_size_max: 7
+    cell_chance: 0.25
     priority: 40
-  # 2026-07-24 recalibrated (see docs/KYOKALITH_SPEC.md handoff notes / commit message for the
-  # full Monte Carlo derivation): cell_chance was 0.006 (the lowest of any ore) and vein_size_max
-  # was 2, which together measured out to ~0.02-0.24 hits per 10,000 sampled blocks across the
-  # whole y8-119 range — i.e. functionally absent, not just rare. That's the real root cause of
-  # "ancient debris is basically unfindable in the y8-22 layer" reports; y_min/y_max/preferred_y
-  # already matched vanilla's shape and were left untouched. cell_chance 0.006->0.05 (~8x) and
-  # vein_size_max 2->3 (matching vanilla's real per-vein block count of 3 for both of its
-  # overlapping distributions) measured ~0.6-1.0 hits/10k in the y8-22 band. (2026-07-24 second
-  # pass: the "clearly rarer than nether_quartz/nether_gold" comparison this paragraph used to make
-  # no longer applies as originally measured — quartz/gold's own y_min/y_max/preferred_y were
-  # themselves wrong at the time and have since been corrected against real vanilla generation
-  # data, see the comment above those two entries.) Remember this is *only* the blind-dig-into-buried-decoy
-  # contribution: most of what a player actually finds at y15 is real, already-exposed vanilla
-  # ancient debris on cave/ravine walls (WORLDGEN_EXPOSED, untouched by this plugin) — this value
-  # only had to stop being ~zero, not carry the entire "findable in 10-20 minutes" experience alone.
+  # Ancient debris remains much rarer than quartz/gold. Its curve combines the vanilla-like
+  # Y15 batch with a lower uniform Y8~119 background so the upper band never collapses to zero.
   ancient_debris:
     enabled: true
     dimension: NETHER
@@ -208,8 +219,14 @@ ores:
     y_min: 8
     y_max: 119
     preferred_y: 15
+    # Two vanilla-like batches: a Y15 peak plus a rarer uniform Y8~119 background.
+    y_weight_points:
+      - { y: 8, weight: 0.65 }
+      - { y: 15, weight: 1.0 }
+      - { y: 22, weight: 0.65 }
+      - { y: 119, weight: 0.65 }
     density: 1.0
     vein_size_min: 1
     vein_size_max: 3
-    cell_chance: 0.05
+    cell_chance: 0.045
     priority: 90

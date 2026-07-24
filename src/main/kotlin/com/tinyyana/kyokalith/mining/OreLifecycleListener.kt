@@ -9,6 +9,7 @@ import com.tinyyana.kyokalith.schedule.Schedulers
 import org.bukkit.GameMode
 import org.bukkit.enchantments.Enchantment
 import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockDropItemEvent
@@ -47,7 +48,7 @@ class OreLifecycleListener(
         )
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         val player = event.player
         if (player.gameMode != GameMode.SURVIVAL) return
@@ -89,12 +90,12 @@ class OreLifecycleListener(
         consumePlacedIfNeeded(key, pending)
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityExplode(event: EntityExplodeEvent) {
         event.blockList().forEach { removePlacedEligible(it.world.name, it.x, it.y, it.z) }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockExplode(event: BlockExplodeEvent) {
         event.blockList().forEach { removePlacedEligible(it.world.name, it.x, it.y, it.z) }
     }

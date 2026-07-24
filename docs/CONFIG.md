@@ -8,11 +8,30 @@ Config validation is **fail-fast**: if any single ore definition is invalid (no 
 
 ---
 
+## `config_schema_version`
+
+| Key | Type | Current | Description |
+|---|---|---|---|
+| `config_schema_version` | Int | `2` | Version of the YAML config shape. This is separate from the DB `schema_version` and `vein_algorithm_version` |
+
+On startup, Kyokalith reads the version from the file itself with `contains(path, true)` **before** merging defaults. A missing key means v1.
+
+This ordering matters for v1 → v2. Bukkit `copyDefaults(true)` otherwise inserts every bundled `y_weight_points` list into the old ore section while retaining that server's old `y_min`/`y_max`; the endpoints can disagree and fail-fast validation disables the plugin. For a detected v1 file, Kyokalith therefore:
+
+1. merges ordinary new defaults;
+2. replaces every inherited `ores.<type>.y_weight_points` with an empty list;
+3. saves `config_schema_version: 2`;
+4. logs `Legacy config detected...` and falls back to each ore's existing triangular `preferred_y` distribution.
+
+This makes an in-place old-config startup safe, but it does **not** apply the new bundled calibration curves. To use those curves, install the complete v2 `config.yml` shipped in the release/patch; do not paste only `y_weight_points` into old ranges.
+
+---
+
 ## `locale`
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `locale` | String | `en` | Language of admin-command output. Bundled: `en`, `zh_TW` |
+| `locale` | String | `zh_TW` | Language of admin-command output. Bundled: `en`, `zh_TW` |
 
 Language files live in `plugins/Kyokalith/lang/<locale>.yml` and override the built-in text key-by-key — keys you delete fall back to the bundled defaults (and any key missing from a locale falls back to English). To add a language, copy `lang/en.yml` to `lang/<name>.yml`, translate the values, and set `locale: <name>`. Color codes use `&`; `{placeholders}` are filled in by the plugin.
 
@@ -51,6 +70,9 @@ ores:
     y_min: -63
     y_max: 16
     preferred_y: -59
+    y_weight_points:
+      - [-63, 1.0]
+      - [16, 0.0]
     density: 1.0
     vein_size_min: 1
     vein_size_max: 4
@@ -64,11 +86,12 @@ ores:
 | `materials.deepslate` | Material | – | Ore block when the base is `DEEPSLATE`. **No fallback to `stone`** — unset means this ore never appears in deepslate layers |
 | `dimension` | `NORMAL` / `NETHER` / `THE_END` | `NORMAL` | Only resolves in this dimension. **Nether ores must explicitly say `NETHER`** |
 | `y_min` / `y_max` | Int | `0` | Hard range; outside it, never resolves |
-| `preferred_y` | Int | `0` | Peak of the triangular weight: 1.0 at `preferred_y`, falling linearly toward `y_min`/`y_max` |
+| `preferred_y` | Int | `0` | Peak of the legacy triangular Y weight. Used only when `y_weight_points` is absent |
+| `y_weight_points` | List of `[y, weight]` | – | Optional piecewise-linear Y curve. Points are sorted by Y; weights between points are interpolated and outside the first/last point use the endpoint weight |
 | `density` | Double | `1.0` | Multiplier applied to `cell_chance` |
-| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | Vein "size". Actual sphere radius = `max(1, size / 2)`, **hard-clamped at 4** |
-| `cell_chance` | Double 0.0–1.0 | required | Probability that a 16×16×16 cell spawns a vein origin (before `density` and the Y weight) |
-| `priority` | Int | `0` | Tie-break when a different ore type's sphere also covers this coordinate. **Higher wins.** Bundled defaults follow rarity (common ore low, rare ore high) so overlap always favors the rarer ore. Same-ore-type overlaps aren't affected (material is identical either way). Shown in `/kyo inspect` |
+| `vein_size_min` / `vein_size_max` | Int 1–32 | `1` / `1` | Exact target block count of one deterministic, face-connected vein. Every `veinId` is strictly bounded by this value |
+| `cell_chance` | Double 0.0–1.0 | required | Probability that an 8×8×8 cell spawns a vein origin (before `density` and the Y weight) |
+| `priority` | Int | `0` | Atomic tie-break for overlapping shapes of different ores that support the queried base material: the lower-priority candidate is discarded in full; equal priority falls back to lower `veinId`. Surviving veins keep their full connected shape and exact size. Touching same-ore neighbors likewise suppress the higher stable `veinId`. Shown in `/kyo inspect` |
 
 ### Effective hit probability
 
@@ -76,13 +99,17 @@ ores:
 activation = clamp(cell_chance × density × yWeight(y), 0, 1)
 ```
 
-`yWeight` is triangular: 1.0 at `preferred_y`, falling linearly to 0 at `y_min` / `y_max`. So **putting `preferred_y` in the middle of the range vs. at its edge produces completely different distributions** — at the edge, half the height range gets very low weight.
+When `y_weight_points` is present, `yWeight` is the piecewise-linear curve described by those points. Otherwise Kyokalith retains the legacy triangular fallback: 1.0 at `preferred_y`, falling linearly to 0 at `y_min` / `y_max`.
 
 ### 🔴 Red lines
 
-**`vein_size_max` beyond ~9 collapses onto the same radius.** The code has `MAX_VEIN_RADIUS = 4`, hard-clamping the sphere at roughly 257 blocks (integer division `size / 2` means 8, 9 and 10 all land on radius 4).
+**`vein_size` controls yield per encounter, not encounter frequency.** It is an exact target count from 1 through 32, and the generated shape is deterministic and face-connected. Want players to meet veins more often? Calibrate `cell_chance`, `density`, and the Y curve while measuring total block density; do not inflate vein size.
 
-That clamp exists because of an "one ore type extends forever" bug history: at `radius = vein_size_max / 2 = 5` the sphere is ~515 blocks — mining one vein meant mining a whole field. Raising the clamp from its earlier value of 2 (all of `vein_size_max` 4-10 collapsing onto the *same* ~33-block sphere, regardless of the config value — the direct cause of "one ore vein empties out and abruptly turns to plain stone") to 4 (~257 blocks) lets `vein_size` differentiate meaningfully across the 1-10 range without reopening the old bug. **Do not remove the clamp entirely to "make veins bigger."** Want more ore overall? Raise `cell_chance` / `density`, not vein size.
+**Do not copy a pre-1.3.3 `cell_chance` by itself.** One 16³ cell contains eight 8³ cells, so the number is not directly comparable. Treat the bundled 11-ore `cell_chance`, `vein_size`, and Y curves as one measured set; the regression suite guards tunnel spacing and 64³ total-volume ceilings together.
+
+**Touching same-ore candidates do not merge.** Adjacent cells are checked deterministically; when their same-ore shapes touch, only the lower stable `veinId` survives. This is part of the generation contract, not a configurable probability.
+
+**Cross-ore overlap never carves fragments.** Arbitration is candidate-atomic, not coordinate-by-coordinate: the losing vein disappears in full, while the winner remains face-connected at exactly its configured `vein_size`.
 
 **Unset `dimension` = overworld only.** (An older config comment claimed "unset = matches all dimensions"; that was wrong — the code defaults to `NORMAL` and matches exactly.)
 
@@ -112,9 +139,13 @@ ores:
     y_min: -16
     y_max: 80
     preferred_y: 32                 # distribution peak
+    y_weight_points:                # optional; remove for legacy triangular fallback
+      - [-16, 0.0]
+      - [32, 1.0]
+      - [80, 0.0]
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 3                # remember: actual radius caps at 4
+    vein_size_max: 3                # exactly 1..3 blocks per accepted vein
     cell_chance: 0.02
 ```
 

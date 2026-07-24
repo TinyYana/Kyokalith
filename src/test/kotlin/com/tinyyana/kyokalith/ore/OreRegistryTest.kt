@@ -77,4 +77,28 @@ class OreRegistryTest {
         val result = OreRegistry.load(null)
         assertTrue(result.isFailure)
     }
+
+    @Test
+    fun `loads ordered piecewise y weights`() {
+        val config = config()
+        config.set(
+            "ores.diamond.y_weight_points",
+            listOf(
+                mapOf("y" to 16, "weight" to 0.0),
+                mapOf("y" to -64, "weight" to 1.0),
+            ),
+        )
+
+        val points = OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow()["diamond"]!!.yWeightPoints
+
+        assertEquals(listOf(YWeightPoint(-64, 1.0), YWeightPoint(16, 0.0)), points)
+    }
+
+    @Test
+    fun `rejects vein size above the hard block limit`() {
+        val config = config()
+        config.set("ores.diamond.vein_size_max", OreDefinition.MAX_VEIN_BLOCKS + 1)
+
+        assertTrue(OreRegistry.load(config.getConfigurationSection("ores")).isFailure)
+    }
 }

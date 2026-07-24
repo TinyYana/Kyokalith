@@ -14,13 +14,16 @@ Traditional anti-X-Ray takes one of two roads, each with a cost: packet obfuscat
 
 1. **World generation is untouched.** Vanilla ores stay where they generated. Ores that were already exposed at generation time (cave walls, ravine faces) are **real** and will never be altered.
 2. **Fully buried ores are decoys.** They exist in the world file and X-Ray sees them, but they say nothing about where ore actually is.
-3. **The only trigger is "a block disappeared".** Player mining, explosions, fire, pistons — one tick after the event, Kyokalith looks at the **six face neighbors** of each removed block.
-4. **Only neighbors exposed for the first time are processed.** A block that already had another open face was already visible — it is never touched. This one rule prevents both failure modes: ore never pops into existence on a wall a player is staring at, and real ore a player has already seen is never wiped.
-5. **Reality is decided.** A deterministic function `f(salt, world, epoch, x, y, z, base block, dimension)` decides: hit → the decoy becomes real ore (or a plain base block **becomes** ore); miss → the decoy reverts to its base block (stone / deepslate / netherrack). The block hasn't been sent to any client yet, so honest players see nothing happen at all.
+3. **The only trigger is "a block disappeared".** Player mining, explosions, fire, pistons — Kyokalith snapshots the removed block's pre-removal occlusion state, then looks at its **six face neighbors** in the same tick. On Folia it first proves that the current region owns the target plus one chunk of read radius; unsafe single-block/piston events are cancelled, while foreign explosion entries stay in the world.
+4. **Only neighbors exposed for the first time are processed.** Visibility means adjacent to any non-occluding material according to Bukkit's `Material.isOccluding`, not just air/water/lava. Ore beside rails, glass, slabs, and other non-occluding blocks was already visible; removing that block can never re-roll or erase it.
+5. **Reality is decided.** A deterministic function `f(salt, world, epoch, x, y, z, base block, dimension)` decides: hit → the decoy becomes real ore (or a plain base block **becomes** ore); miss → the decoy reverts to its base block (stone / deepslate / netherrack). Every hit belongs to a deterministic, face-connected voxel shape whose block count is exactly the configured `vein_size`. The block hasn't been sent to any client yet, so honest players see nothing happen at all.
+6. **A visible vanilla ore is a safe vein entrance, not a one-block shell.** When a player mines it — or TNT directly destroys it — Kyokalith locks one private-salt continuation of the configured `vein_size` behind it. The hidden route does not follow the vanilla ore component, so a seed map still cannot predict it. The full result and its stop frontier are persisted once; locked members cannot seed another vein.
 
-Per-event cost is bounded by a constant: `removed blocks × 6`. **No scanning, no scheduled scan tasks, no `ChunkLoadEvent` work.**
+TNT resolves both the blocks it destroys and the new crater surface before drops are created. A buried decoy hit directly by TNT therefore cannot bypass the private-salt decision, while real resolver hits inside the blast volume still drop normally. Per-event cost is bounded: ordinary removals inspect six faces; one shape locks at most 32 positions; one visible natural-ore continuation writes at most `7 × vein_size` rows (224 at the global limit); all writes in one event share a 4,096-row cap. Explosions above 512 affected blocks are cancelled in O(1). **No scanning, no scheduled scan tasks, no `ChunkLoadEvent` work.**
 
 > The current decoy model replaced an earlier scan-based approach (pre-v1.0 "v0.3"), which wiped ores via datapack and regenerated them by scanning chunks — 121 force-loaded chunks dragged TPS down to 18.9. Deleting the entire scanning pipeline brought it back to 20.1. **Any "let's just scan a few chunks while we're at it" idea is a hard red line in this plugin.**
+
+Adjacent cells cannot merge into one endless same-ore belt: if two same-ore candidate shapes touch face-to-face, only the lower stable `veinId` survives. Cross-ore overlap is also atomic: the lower-priority candidate is discarded in full (equal priority falls back to lower `veinId`), so every surviving vein remains face-connected and keeps exactly its configured block count instead of leaving 1–2 block fragments.
 
 ### Covered-up ore is never re-resolved
 
@@ -49,7 +52,11 @@ The Kotlin stdlib and SQLite driver are downloaded at startup by the Bukkit libr
 
 ## Upgrading
 
-Config upgrades are automatic: new keys are merged into your existing `config.yml` on startup with their default values; your existing values are never overwritten. Notably, `locale` defaults to `en` — set `locale: zh_TW` (or your own lang file) if you want something else.
+Config upgrades are schema-aware. New scalar keys are merged without overwriting your existing values, but v1 configs are **not** allowed to inherit v2 `y_weight_points`: Bukkit's normal `copyDefaults` would combine the new curves with your old `y_min`/`y_max`, producing an invalid mixed definition. On first v1 startup, Kyokalith writes `config_schema_version: 2`, clears only those inherited curves, warns, and safely keeps your legacy triangular `preferred_y` behavior. Install the release's complete v2 `config.yml` if you want the newly calibrated bundled curves. The bundled server config uses `locale: zh_TW`; set `locale: en` (or your own lang file) if you want something else.
+
+Version 1.3.3 introduces vein algorithm version `3`. On its first startup, Kyokalith invalidates only the derived `materialized_positions` lock cache, then records `vein_algorithm_version=3`. This removes sparse v2 locks before 8³ cells and one-shot continuation locks take effect. It does **not** reset the salt, epochs, dirty positions, eligible ores, suspended chunks, or any block already written to the world.
+
+Version 1.3.4 keeps algorithm version `3` and does not clear any table; it only fixes explosion-time authentication and event budgeting.
 
 ## Commands
 
@@ -80,7 +87,7 @@ Non-survival modes (creative/spectator/adventure) never consume tokens either.
 
 ## Configuration
 
-`config.yml` has three blocks: `locale`, `database` (file name, dirty write-back interval), and `ores` (data-driven ore definitions — adding an ore type requires no code).
+`config.yml` has `locale`, `config_schema_version`, `database` (file name, dirty write-back interval), and `ores` (data-driven ore definitions — adding an ore type requires no code). `vein_size_min/max` are exact target block counts (`1..32`), not radii or sphere volumes, and also bound a visible vanilla ore's salt-protected continuation. Optional `y_weight_points` define a piecewise-linear height curve; migrated old configs keep the legacy triangular `preferred_y` curve until the complete v2 config is installed.
 
 The knobs you'll touch most are each ore's `cell_chance` / `density` / `preferred_y` — **these three are literally your server economy's faucet**. Full field reference, the hit-probability formula, and the red lines live in **[docs/CONFIG.md](docs/CONFIG.md)**.
 
@@ -119,7 +126,7 @@ The Kotlin version in `plugin.yml`'s `libraries:` **must match `gradle/libs.vers
 
 ## Data
 
-A single SQLite file, `plugins/Kyokalith/kyokalith.db` (WAL). Stores the `salt`, per-chunk `epoch`s, dirty positions, placed eligible ores, and suspended chunks. Schema details in [docs/API.md](docs/API.md#tables).
+A single SQLite file, `plugins/Kyokalith/kyokalith.db` (WAL). Stores the `salt`, vein-algorithm version, per-chunk `epoch`s, dirty positions, placed eligible ores, suspended chunks, and the derived `materialized_positions` lock cache. Schema and migration details are in [docs/API.md](docs/API.md#tables).
 
 ## License
 

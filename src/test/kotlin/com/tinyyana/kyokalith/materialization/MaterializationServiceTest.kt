@@ -1,6 +1,10 @@
 package com.tinyyana.kyokalith.materialization
 
+import com.tinyyana.kyokalith.ore.OreRegistry
+import com.tinyyana.kyokalith.vein.OreVeinResolver
+import com.tinyyana.kyokalith.vein.VeinPosition
 import org.bukkit.Material
+import org.bukkit.configuration.file.YamlConfiguration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -54,6 +58,26 @@ class MaterializationServiceTest {
         assertTrue(MaterializationService.isNewlyExposed(neighbors))
     }
 
+    @Test
+    fun `breaking a rail above an already visible ore cannot re-resolve it`() {
+        val neighbors = listOf(
+            NeighborExposure(
+                inRemovedKeys = true,
+                liveTransparent = true,
+                removedWasNonOccluding = true,
+            ),
+            solidNeighbor,
+            solidNeighbor,
+            solidNeighbor,
+            solidNeighbor,
+            solidNeighbor,
+        )
+        assertFalse(
+            MaterializationService.isNewlyExposed(neighbors),
+            "鐵軌原本就不遮蔽視線，挖掉它不能把下方已可見礦誤判為首次曝露",
+        )
+    }
+
     /**
      * 已經有一個透明面不屬於本次事件(世界生成就曝露,或先前事件已經決算過):
      * 一律當作「事件前就看得到」,不能再被改動,即使本次事件也移除了另一個鄰居。
@@ -77,18 +101,157 @@ class MaterializationServiceTest {
         assertFalse(MaterializationService.isNewlyExposed(neighbors))
     }
 
-    /**
-     * 5×5×5 局部鄰域預決算的硬上限:不管礦脈候選球之後被調得多大(OreVeinResolver 的
-     * MAX_VEIN_RADIUS 是獨立的上限),單一首次曝露事件一次鎖定的鄰域工作量永遠是這 124 個
-     * 額外座標,不會變成掃整顆礦脈或整個 chunk。
-     */
     @Test
-    fun `neighborhood offsets are a fixed 124-entry window regardless of vein size`() {
-        val offsets = MaterializationService.neighborhoodOffsets()
+    fun `visible vanilla ore keeps a bounded continuation and seals its frontier`() {
+        val origin = VeinPosition(0, 0, 0)
+        val iron = WorldgenContinuationNode("iron", "IRON_ORE", "STONE", exposed = false)
+        val plan = MaterializationService.planWorldgenContinuation(origin, 32, lookup = { iron })
 
-        assertEquals(124, offsets.size, "5x5x5 扣掉原點應該正好是 124 個座標")
-        assertTrue(offsets.none { (dx, dy, dz) -> dx == 0 && dy == 0 && dz == 0 }, "觸發座標本身不該出現在鄰域清單裡")
-        assertTrue(offsets.all { (dx, dy, dz) -> dx in -2..2 && dy in -2..2 && dz in -2..2 }, "每個偏移量都必須落在半徑 2 以內")
-        assertEquals(offsets.size, offsets.toSet().size, "偏移量不應該重複")
+        assertEquals(32, plan.vein.size)
+        assertTrue(plan.boundary.isNotEmpty(), "超過 vein_size_max 的原版礦必須有明確 stop frontier")
+        assertTrue(plan.vein.keys.intersect(plan.boundary.keys).isEmpty())
+        assertTrue(plan.vein.size + plan.boundary.size <= 32 * 7, "一次事件最多 32 keep + 192 frontier rows")
+        plan.boundary.keys.forEach { boundary ->
+            assertTrue(
+                plan.vein.keys.any { vein ->
+                    kotlin.math.abs(vein.x - boundary.x) +
+                        kotlin.math.abs(vein.y - boundary.y) +
+                        kotlin.math.abs(vein.z - boundary.z) == 1
+                },
+                "stop frontier 只能是 keep 礦脈的直接鄰居，不能繼續 BFS 接力",
+            )
+        }
+    }
+
+    @Test
+    fun `legacy miss would erase ore behind a visible ore while continuation keeps it`() {
+        val config = YamlConfiguration()
+        config.set("ores.iron.enabled", true)
+        config.set("ores.iron.materials.stone", "IRON_ORE")
+        config.set("ores.iron.y_min", -64)
+        config.set("ores.iron.y_max", 320)
+        config.set("ores.iron.preferred_y", 16)
+        config.set("ores.iron.density", 1.0)
+        config.set("ores.iron.vein_size_min", 3)
+        config.set("ores.iron.vein_size_max", 7)
+        config.set("ores.iron.cell_chance", 0.0)
+        val resolver = OreVeinResolver(
+            "visible-worldgen-regression",
+            OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow(),
+        )
+        val visible = VeinPosition(0, 16, 0)
+        val hidden = VeinPosition(1, 16, 0)
+        val iron = WorldgenContinuationNode("iron", "IRON_ORE", "STONE", exposed = false)
+
+        assertNull(
+            resolver.resolve("world", 0, hidden.x, hidden.y, hidden.z, "STONE"),
+            "1.3.2 路徑在 resolver miss 時會把原生隱藏鐵礦改成 STONE",
+        )
+        val plan = MaterializationService.planWorldgenContinuation(
+            visible,
+            7,
+            mapOf(visible to iron.copy(exposed = true), hidden to iron)::get,
+        )
+        assertEquals("IRON_ORE", plan.vein.getValue(hidden).material)
+    }
+
+    @Test
+    fun `worldgen continuation follows ore type across stone boundary but not another ore`() {
+        val origin = VeinPosition(-1, 0, 0)
+        val nodes = mapOf(
+            origin to WorldgenContinuationNode("iron", "IRON_ORE", "STONE", exposed = true),
+            VeinPosition(0, 0, 0) to WorldgenContinuationNode("iron", "DEEPSLATE_IRON_ORE", "DEEPSLATE", exposed = false),
+            VeinPosition(1, 0, 0) to WorldgenContinuationNode("gold", "GOLD_ORE", "STONE", exposed = true),
+        )
+
+        val plan = MaterializationService.planWorldgenContinuation(origin, 9, nodes::get)
+
+        assertEquals(setOf(origin, VeinPosition(0, 0, 0)), plan.vein.keys)
+        assertTrue(plan.boundary.isEmpty())
+    }
+
+    @Test
+    fun `worldgen continuation spatial radius is a hard endpoint`() {
+        val origin = VeinPosition(-2, 0, 0)
+        val iron = WorldgenContinuationNode("iron", "IRON_ORE", "STONE", exposed = false)
+        val chain = (-20..20).associate { VeinPosition(it, 0, 0) to iron }
+
+        val plan = MaterializationService.planWorldgenContinuation(origin, 32, chain::get)
+
+        assertEquals(9, plan.vein.size, "半徑 4 內只可能保留九格直線")
+        assertEquals(setOf(VeinPosition(-7, 0, 0), VeinPosition(3, 0, 0)), plan.boundary.keys)
+    }
+
+    @Test
+    fun `one explosion cannot create unbounded exposure work`() {
+        assertFalse(MaterializationListener.shouldCancelExplosion(512))
+        assertTrue(MaterializationListener.shouldCancelExplosion(513))
+        assertTrue(MaterializationListener.shouldCancelExplosion(10_000))
+    }
+
+    @Test
+    fun `foreign Folia region explosion entries stay outside exposure work`() {
+        val blocks = (0 until 10).toMutableList()
+
+        assertEquals(5, MaterializationListener.retainOwnedBlocks(blocks) { it % 2 == 0 })
+        assertEquals(listOf(0, 2, 4, 6, 8), blocks)
+    }
+
+    @Test
+    fun `accepted explosion ownership checks stay within the fixed cap`() {
+        val blocks = (0 until MaterializationListener.MAX_EXPLOSION_BLOCKS_PER_EVENT).toMutableList()
+        var ownershipChecks = 0
+
+        val foreign = MaterializationListener.retainOwnedBlocks(blocks) {
+            ownershipChecks++
+            it % 2 == 0
+        }
+
+        assertEquals(256, foreign)
+        assertEquals(MaterializationListener.MAX_EXPLOSION_BLOCKS_PER_EVENT, ownershipChecks)
+        assertEquals(256, blocks.size)
+    }
+
+    @Test
+    fun `one event cannot reserve more than the fixed materialization row budget`() {
+        val budget = MaterializationWriteBudget(MaterializationService.MAX_MATERIALIZED_ROWS_PER_EVENT)
+
+        assertTrue(budget.reserve(4_000))
+        assertFalse(budget.reserve(97))
+        assertTrue(budget.reserve(96))
+        assertFalse(budget.reserve(1))
+    }
+
+    @Test
+    fun `complete resolver shape is locked once without a moving window`() {
+        val config = YamlConfiguration()
+        config.set("ores.test.enabled", true)
+        config.set("ores.test.materials.stone", "IRON_ORE")
+        config.set("ores.test.y_min", -64)
+        config.set("ores.test.y_max", 64)
+        config.set("ores.test.preferred_y", 0)
+        config.set("ores.test.density", 1.0)
+        config.set("ores.test.vein_size_min", 32)
+        config.set("ores.test.vein_size_max", 32)
+        config.set("ores.test.cell_chance", 1.0)
+        val resolver = OreVeinResolver(
+            "lock-relay-regression",
+            OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow(),
+        )
+        var resolved = run {
+            for (x in 0 until 32) for (y in -16 until 16) for (z in 0 until 32) {
+                resolver.resolveDetailed("world", 0, x, y, z, "STONE")?.let { return@run it }
+            }
+            error("找不到測試礦脈")
+        }
+
+        val locked = resolved.shape.positions
+        assertEquals(32, locked.size, "首次命中可一次鎖定完整 shape，不需要玩家繼續挖掘來接力")
+        val outside = VeinPosition(
+            resolved.shape.positions.maxOf { it.x } + 1,
+            resolved.shape.positions.first().y,
+            resolved.shape.positions.first().z,
+        )
+        assertFalse(outside in locked)
     }
 }

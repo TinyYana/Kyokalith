@@ -24,6 +24,15 @@ class OreRegistry private constructor(
     fun oreTypeForEnabledMaterial(material: String): String? =
         ores.values.firstOrNull { it.enabled && (it.stoneMaterial == material || it.deepslateMaterial == material) }?.oreType
 
+    fun materialForBase(oreType: String, baseMaterial: String): String? {
+        val ore = ores[oreType] ?: return null
+        return when (baseMaterial) {
+            "DEEPSLATE" -> ore.deepslateMaterial
+            "STONE", "NETHERRACK" -> ore.stoneMaterial
+            else -> null
+        }
+    }
+
     companion object {
         fun load(section: ConfigurationSection?): Result<OreRegistry> = runCatching {
             requireNotNull(section) { "config.yml 缺少 ores 節點" }
@@ -31,6 +40,15 @@ class OreRegistry private constructor(
                 val ore = section.getConfigurationSection(oreType)
                     ?: error("ores.$oreType 不是合法的設定節點")
                 val materials = ore.getConfigurationSection("materials")
+                val yWeightPoints = ore.getMapList("y_weight_points")
+                    .mapIndexed { index, point ->
+                        val y = (point["y"] as? Number)?.toInt()
+                            ?: error("ores.$oreType.y_weight_points[$index].y 必須是整數")
+                        val weight = (point["weight"] as? Number)?.toDouble()
+                            ?: error("ores.$oreType.y_weight_points[$index].weight 必須是數字")
+                        YWeightPoint(y, weight)
+                    }
+                    .sortedBy { it.y }
                 OreDefinition(
                     oreType = oreType,
                     enabled = ore.getBoolean("enabled", true),
@@ -40,6 +58,7 @@ class OreRegistry private constructor(
                     yMin = ore.getInt("y_min"),
                     yMax = ore.getInt("y_max"),
                     preferredY = ore.getInt("preferred_y"),
+                    yWeightPoints = yWeightPoints,
                     density = ore.getDouble("density", 1.0),
                     veinSizeMin = ore.getInt("vein_size_min", 1),
                     veinSizeMax = ore.getInt("vein_size_max", 1),

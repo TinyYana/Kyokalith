@@ -8,11 +8,30 @@
 
 ---
 
+## `config_schema_version`
+
+| Key | 型別 | 目前版本 | 說明 |
+|---|---|---|---|
+| `config_schema_version` | Int | `2` | YAML 設定格式版本;跟 DB 的 `schema_version`、`vein_algorithm_version` 是不同東西 |
+
+啟動時會先用 `contains(path, true)` 只讀檔案本身的版本,再合併 defaults。沒有這個 key 就視為 v1。
+
+這個順序是 v1 → v2 安全升級的關鍵。Bukkit `copyDefaults(true)` 原本會把所有新版 `y_weight_points` 清單塞進舊 ore section,卻保留該伺服器原本的 `y_min`/`y_max`;曲線端點不一致時,fail-fast 驗證就會把插件停用。偵測到 v1 時,Kyokalith 會:
+
+1. 合併一般的新預設 key;
+2. 把每種礦繼承來的 `ores.<type>.y_weight_points` 改成空清單;
+3. 儲存 `config_schema_version: 2`;
+4. 寫出 `Legacy config detected...` warning,並沿用該礦原本的 `preferred_y` 三角分布。
+
+這能保證舊 config 原地升級時正常啟用,但**不代表已套用新版內建校準曲線**。要使用那些曲線,請安裝 release/patch 提供的完整 v2 `config.yml`;不要只把 `y_weight_points` 貼進舊 Y 範圍。
+
+---
+
 ## `locale`
 
 | Key | 型別 | 預設 | 說明 |
 |---|---|---|---|
-| `locale` | String | `en` | 管理指令輸出語系。內建:`en`、`zh_TW` |
+| `locale` | String | `zh_TW` | 管理指令輸出語系。內建:`en`、`zh_TW` |
 
 語系檔在 `plugins/Kyokalith/lang/<locale>.yml`,逐 key 覆蓋內建文字——刪掉的 key 回退內建預設(語系缺的 key 回退英文)。要加語言:把 `lang/en.yml` 複製成 `lang/<名稱>.yml` 翻譯後,設 `locale: <名稱>`。色碼用 `&`,`{佔位符}` 由插件代入。
 
@@ -51,6 +70,9 @@ ores:
     y_min: -63
     y_max: 16
     preferred_y: -59
+    y_weight_points:
+      - [-63, 1.0]
+      - [16, 0.0]
     density: 1.0
     vein_size_min: 1
     vein_size_max: 4
@@ -64,11 +86,12 @@ ores:
 | `materials.deepslate` | Material | – | 基礎方塊是 `DEEPSLATE` 時的礦方塊。**不會 fallback 到 `stone`**——沒設就是深板岩層不出這種礦 |
 | `dimension` | `NORMAL` / `NETHER` / `THE_END` | `NORMAL` | 只在這個維度解析。**地獄礦一定要明寫 `NETHER`** |
 | `y_min` / `y_max` | Int | `0` | 硬性範圍,超出永遠不解析 |
-| `preferred_y` | Int | `0` | 三角形權重的峰值:在 `preferred_y` 是 1.0,線性遞減到 `y_min`/`y_max` 較遠的那一端變成 0 |
+| `preferred_y` | Int | `0` | 舊版三角形 Y 權重的峰值;只有沒設定 `y_weight_points` 時才使用 |
+| `y_weight_points` | `[y, weight]` 清單 | – | 可選的分段線性 Y 曲線。依 Y 排序、點與點之間線性插值,超出首尾點時沿用端點權重 |
 | `density` | Double | `1.0` | 乘在 `cell_chance` 上的倍率 |
-| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | 礦脈「大小」。實際球半徑 = `max(1, size / 2)`,**上限硬夾在 4** |
-| `cell_chance` | Double 0.0–1.0 | 必填 | 一個 16×16×16 的 cell 生出礦脈原點的機率(還沒乘 `density` 與 Y 權重) |
-| `priority` | Int | `0` | 另一種礦種的候選球也命中同一座標時的仲裁——**數字較大的贏**。內建預設依稀有度排:常見礦低、稀有礦高,重疊時永遠是較稀有的礦贏。同礦種互相重疊不受影響(材質反正一樣)。`/kyo inspect` 會顯示 |
+| `vein_size_min` / `vein_size_max` | Int 1–32 | `1` / `1` | 單顆決定性、六面連通礦脈的精確目標方塊數;每個 `veinId` 都受這個值嚴格限制 |
+| `cell_chance` | Double 0.0–1.0 | 必填 | 一個 8×8×8 的 cell 生出礦脈原點的機率(還沒乘 `density` 與 Y 權重) |
+| `priority` | Int | `0` | 支援本次查詢 base material 的不同礦種形狀重疊時做整顆原子仲裁:較低 priority 的候選整顆淘汰,同 priority 才由較低 `veinId` 勝出;存活礦脈保留完整連通形狀與精確格數。相鄰同礦候選也抑制較高的穩定 `veinId`。`/kyo inspect` 會顯示 |
 
 ### 實際命中機率
 
@@ -76,13 +99,17 @@ ores:
 啟用機率 = clamp(cell_chance × density × yWeight(y), 0, 1)
 ```
 
-`yWeight` 是三角形:`preferred_y` 處為 1.0,往 `y_min` / `y_max` 兩端線性掉到 0。所以**把 `preferred_y` 設在範圍正中間跟設在邊緣,分布形狀完全不同**——邊緣的話,一半的高度區間權重會很低。
+有設定 `y_weight_points` 時,`yWeight` 使用該分段線性曲線;沒設定時保留舊版三角形 fallback:`preferred_y` 處為 1.0,往 `y_min` / `y_max` 兩端線性掉到 0。
 
 ### 🔴 紅線
 
-**`vein_size_max` 超過 ~9 會收斂成同一個半徑。** 程式裡 `MAX_VEIN_RADIUS = 4`,把球體硬夾在約 257 個方塊(整數除法 `size / 2` 讓 8、9、10 全部落在半徑 4)。
+**`vein_size` 控制一次遭遇的產量,不是遭遇頻率。** 它是 1 到 32 的精確目標格數,形狀固定可重現且六面連通。想讓玩家更常遇到礦,要一起量測總密度後調 `cell_chance`、`density` 與 Y 曲線,不要把單脈放大。
 
-這個上限的存在是因為歷史上修過「同一種礦無限延伸」的 bug:半徑 `= vein_size_max / 2 = 5` 時球體約 515 個方塊,玩家挖到一條就等於挖到一整片。把上限從舊值 2(`vein_size_max` 4~10 全部收斂成同一顆約 33 格的球,不管設 4 還是 10 感受不出差異——這正是「挖到一顆礦後續突然變石頭」的直接成因)提高到 4(約 257 格),讓 `vein_size` 在 1~10 的範圍內有實際區隔,同時沒有重新打開舊 bug。**不要為了「讓礦脈大一點」把上限整個拿掉。** 想要整體礦更多,調的是 `cell_chance` / `density`,不是脈大小。
+**不要單獨照抄 1.3.3 之前的 `cell_chance`。** 一個16³ cell等於八個8³ cell,數字不能直接比較。內建11礦的 `cell_chance`、`vein_size`與Y曲線是一整組量測結果;回歸測試會同時守住隧道間距與64³總量上限。
+
+**同礦種接觸候選不會合併。** 系統會決定性檢查相鄰 cell;兩顆同礦形狀接觸時只保留較低的穩定 `veinId`。這是生成契約,不是可調機率。
+
+**跨礦種重疊不會切出殘片。** 仲裁單位是整顆候選,不是逐座標:敗者整顆消失,勝者仍是六面連通且精確等於 `vein_size`。
 
 **`dimension` 沒設 = 只在主世界。** (舊版 config 的註解說「不設 = 所有維度都會命中」,那是錯的——程式預設 `NORMAL` 並做精確比對。)
 
@@ -112,9 +139,13 @@ ores:
     y_min: -16
     y_max: 80
     preferred_y: 32                 # 分布峰值
+    y_weight_points:                # 可選;刪除即使用舊版三角形 fallback
+      - [-16, 0.0]
+      - [32, 1.0]
+      - [80, 0.0]
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 3                # 記得:實際半徑上限是 4
+    vein_size_max: 3                # 每顆接受的礦脈精確為 1..3 格
     cell_chance: 0.02
 ```
 

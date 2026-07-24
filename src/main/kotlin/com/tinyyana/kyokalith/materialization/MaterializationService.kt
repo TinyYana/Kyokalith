@@ -5,13 +5,47 @@ import com.tinyyana.kyokalith.chunk.ChunkCoord
 import com.tinyyana.kyokalith.chunk.EpochedChunk
 import com.tinyyana.kyokalith.chunk.LocalPos
 import com.tinyyana.kyokalith.vein.MaterializedVein
+import com.tinyyana.kyokalith.vein.MaterializedPosition
 import com.tinyyana.kyokalith.vein.ResolvedVein
+import com.tinyyana.kyokalith.vein.VeinPosition
 import org.bukkit.Material
 import org.bukkit.block.Block
 import org.bukkit.block.BlockFace
 
-/** 候選方塊的一個鄰居面:是否屬於本次事件的 removedKeys、是否目前就已經是透明方塊。 */
-data class NeighborExposure(val inRemovedKeys: Boolean, val liveTransparent: Boolean)
+/** 候選方塊的一個鄰居面，以及事件前是否早已透過非遮蔽方塊看得見。 */
+data class NeighborExposure(
+    val inRemovedKeys: Boolean,
+    val liveTransparent: Boolean,
+    val removedWasNonOccluding: Boolean = false,
+)
+
+/** 事件當下保存的移除前狀態；排到 Folia region 後也不會把原本的鐵軌誤讀成空氣。 */
+data class RemovedBlockSnapshot(val block: Block, val wasOccluding: Boolean)
+
+data class WorldgenContinuationNode(
+    val oreType: String?,
+    val material: String,
+    val baseMaterial: String,
+    val exposed: Boolean,
+)
+
+data class WorldgenContinuationPlan(
+    val vein: Map<VeinPosition, WorldgenContinuationNode>,
+    val boundary: Map<VeinPosition, WorldgenContinuationNode>,
+)
+
+internal class MaterializationWriteBudget(private var remaining: Int) {
+    init {
+        require(remaining >= 0)
+    }
+
+    fun reserve(rows: Int): Boolean {
+        require(rows >= 0)
+        if (rows > remaining) return false
+        remaining -= rows
+        return true
+    }
+}
 
 /**
  * 曝露時決算(誘餌模型)。
@@ -22,7 +56,8 @@ data class NeighborExposure(val inRemovedKeys: Boolean, val liveTransparent: Boo
  * 玩家看得到的礦全部是真的,誘餌只會騙到隔著實心方塊偷看的透視。
  *
  * 全程沒有 chunk 掃描、沒有排程任務、沒有 ChunkLoadEvent 處理;只在主執行緒由
- * 方塊消失事件觸發,每次事件的成本上限是「消失方塊數 × 6 鄰居」的常數工作。
+ * 方塊消失事件觸發。一般事件只看每個消失方塊的6鄰居；爆炸另決算有界blockList本身，
+ * 並受512方塊與4096筆鎖定row雙重硬上限。
  */
 class MaterializationService(private val plugin: KyokalithPlugin) {
 
@@ -35,18 +70,157 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
      * 「玩家把看到的礦蓋起來、之後再挖開,礦不會消失」的保護。
      */
     fun resolveRemoved(removed: Collection<Block>) {
-        if (removed.isEmpty()) return
-        val removedKeys = removed.mapTo(HashSet()) { PosKey(it.x, it.y, it.z) }
+        resolveRemovedSnapshots(removed.map { RemovedBlockSnapshot(it, it.type.isOccluding) })
+    }
+
+    /** 只有玩家親手挖掉事件前已可見的原生礦，才可建立一次性的原版礦脈延續鎖。 */
+    fun resolvePlayerBreak(snapshot: RemovedBlockSnapshot): Boolean =
+        resolveRemovedSnapshots(listOf(snapshot), allowWorldgenContinuation = true)
+
+    /**
+     * TNT/床/終界水晶等爆炸會同時首次曝露與直接移除方塊。除了坑洞表面，也必須在掉落物
+     * 產生前驗證 blockList 內的石頭與原生礦；否則埋藏誘餌可被透視後直接炸成掉落物。
+     */
+    fun resolveExplosionSnapshots(removed: Collection<RemovedBlockSnapshot>): Boolean =
+        resolveRemovedSnapshots(
+            removed,
+            allowWorldgenContinuation = true,
+            resolveRemovedOrigins = true,
+        )
+
+    fun resolveRemovedSnapshots(
+        removed: Collection<RemovedBlockSnapshot>,
+        allowWorldgenContinuation: Boolean = false,
+        resolveRemovedOrigins: Boolean = false,
+    ): Boolean {
+        if (removed.isEmpty()) return true
+        val ordered = removed.sortedWith(
+            compareBy<RemovedBlockSnapshot>({ it.block.world.name }, { it.block.x }, { it.block.y }, { it.block.z }),
+        )
+        val removedKeys = ordered.mapTo(HashSet()) { PosKey(it.block.x, it.block.y, it.block.z) }
+        val alreadyExposingKeys = ordered.asSequence()
+            .filterNot { it.wasOccluding }
+            .mapTo(HashSet()) { PosKey(it.block.x, it.block.y, it.block.z) }
+        val active = ordered.filterNot { isDirty(it.block) }
         val visited = HashSet<PosKey>()
-        removed.forEach { origin ->
-            if (isDirty(origin)) return@forEach
-            NEIGHBORS.forEach { face ->
-                val neighbor = origin.getRelative(face)
-                val key = PosKey(neighbor.x, neighbor.y, neighbor.z)
-                if (key in removedKeys || !visited.add(key)) return@forEach
-                resolveIfNewlyExposed(neighbor, removedKeys)
+        val pending = LinkedHashMap<PosKey, PendingTypeChange>()
+        val budget = MaterializationWriteBudget(MAX_MATERIALIZED_ROWS_PER_EVENT)
+        val trustedAnchors = HashSet<PosKey>()
+
+        if (allowWorldgenContinuation) {
+            for (snapshot in active) {
+                val origin = snapshot.block
+                when (activateWorldgenContinuation(origin, budget)) {
+                    AnchorResult.FAILED -> return false
+                    AnchorResult.LOCKED -> trustedAnchors += PosKey(origin.x, origin.y, origin.z)
+                    AnchorResult.NOT_ANCHOR -> Unit
+                }
             }
         }
+        if (resolveRemovedOrigins) {
+            for (snapshot in active) {
+                val origin = snapshot.block
+                if (PosKey(origin.x, origin.y, origin.z) !in trustedAnchors &&
+                    !resolveRemovedOrigin(origin, pending, budget)
+                ) {
+                    return false
+                }
+            }
+        }
+        for (snapshot in active) {
+            val origin = snapshot.block
+            for (face in NEIGHBORS) {
+                val nx = origin.x + face.modX
+                val ny = origin.y + face.modY
+                val nz = origin.z + face.modZ
+                val neighbor = blockIfLoaded(origin.world, nx, ny, nz) ?: continue
+                val key = PosKey(nx, ny, nz)
+                if (key in removedKeys || !visited.add(key)) continue
+                if (!resolveIfNewlyExposed(neighbor, removedKeys, alreadyExposingKeys, pending, budget)) return false
+            }
+        }
+        pending.values.forEach { change ->
+            if (change.block.type != change.target) change.block.setType(change.target, false)
+        }
+        return true
+    }
+
+    /**
+     * 世界生成時已裸露的原生礦只是一個可信入口。第一次挖它時，由私有 salt 排序的
+     * 六面連通 growth 建立 vein_size 格延續；不沿用可由 world seed 預測的原版礦形。
+     * 原生同礦 frontier 另鎖成終點，後續任何已鎖格都不能再開新錨點。未曝露格只寫鎖、
+     * 不 setType；整批跨 chunk 共用單一 transaction。
+     */
+    private fun activateWorldgenContinuation(
+        origin: Block,
+        budget: MaterializationWriteBudget,
+    ): AnchorResult {
+        val rootMaterial = origin.type
+        val oreType = plugin.oreRegistry.oreTypeForEnabledMaterial(rootMaterial.name) ?: return AnchorResult.NOT_ANCHOR
+        if (!hasAnyExposedFace(origin)) return AnchorResult.NOT_ANCHOR
+
+        val rootPosition = materializedPosition(origin) ?: return AnchorResult.NOT_ANCHOR
+        if (plugin.materializedVeinStore.find(rootPosition.chunk, rootPosition.pos) != null) {
+            return AnchorResult.NOT_ANCHOR
+        }
+        val originPos = VeinPosition(origin.x, origin.y, origin.z)
+        val targetBlocks = plugin.oreVeinResolver.worldgenContinuationSize(
+            origin.world.name,
+            rootPosition.chunk.epoch,
+            oreType,
+            originPos,
+        )
+        val blocks = HashMap<VeinPosition, Block>()
+        val plan = planWorldgenContinuation(
+            originPos,
+            targetBlocks,
+            { position ->
+            val block = blockIfLoaded(origin.world, position.x, position.y, position.z) ?: return@planWorldgenContinuation null
+            val positionKey = materializedPosition(block) ?: return@planWorldgenContinuation null
+            if (plugin.suspendedChunkStore.isSuspended(positionKey.chunk.coord())) return@planWorldgenContinuation null
+            if (plugin.dirtyPositionStore.isDirty(positionKey.chunk, positionKey.pos)) return@planWorldgenContinuation null
+            if (plugin.materializedVeinStore.find(positionKey.chunk, positionKey.pos) != null) {
+                return@planWorldgenContinuation null
+            }
+            val material = block.type
+            val nodeOreType = plugin.oreRegistry.oreTypeForEnabledMaterial(material.name)
+            val base = if (material in BASE_BLOCKS) material else {
+                if (nodeOreType == null) return@planWorldgenContinuation null
+                nativeOreBase(material) ?: return@planWorldgenContinuation null
+            }
+            blocks[position] = block
+            WorldgenContinuationNode(nodeOreType, material.name, base.name, hasAnyExposedFace(block))
+            },
+            { position ->
+                plugin.oreVeinResolver.worldgenContinuationRank(
+                    origin.world.name,
+                    rootPosition.chunk.epoch,
+                    oreType,
+                    originPos,
+                    position,
+                )
+            },
+        )
+        if (plan.vein.size == 1 && plan.boundary.isEmpty()) return AnchorResult.LOCKED
+
+        val veinId = "worldgen:${origin.world.name}:${rootPosition.chunk.epoch}:${origin.x}:${origin.y}:${origin.z}"
+        val entries = LinkedHashMap<MaterializedPosition, MaterializedVein>()
+        plan.vein.forEach { (position, node) ->
+            val key = materializedPosition(blocks.getValue(position)) ?: return AnchorResult.FAILED
+            val material = if (position == originPos || node.exposed) {
+                node.material
+            } else {
+                plugin.oreRegistry.materialForBase(oreType, node.baseMaterial) ?: return AnchorResult.FAILED
+            }
+            entries[key] = MaterializedVein(oreType, veinId, material)
+        }
+        plan.boundary.forEach { (position, node) ->
+            val key = materializedPosition(blocks.getValue(position)) ?: return AnchorResult.FAILED
+            entries[key] = MaterializedVein(null, null, if (node.exposed) node.material else node.baseMaterial)
+        }
+        check(entries.size <= targetBlocks * 7) { "worldgen continuation lock exceeded fixed boundary cap" }
+        if (!budget.reserve(entries.size)) return AnchorResult.FAILED
+        return if (plugin.materializedVeinStore.upsertAll(entries)) AnchorResult.LOCKED else AnchorResult.FAILED
     }
 
     /** 玩家放置/機制生成的座標永不實體化,之後挖開它也不觸發鄰居決算(§10)。 */
@@ -66,18 +240,24 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
      * 真正首次曝露的那一個)才會被 setType,鄰域鎖定的其他座標只寫進資料庫/記憶體快取,
      * 物理世界方塊維持原狀不變,直到它們自己未來真正首次曝露的那一刻。**
      */
-    private fun resolveIfNewlyExposed(block: Block, removedKeys: Set<PosKey>) {
+    private fun resolveIfNewlyExposed(
+        block: Block,
+        removedKeys: Set<PosKey>,
+        alreadyExposingKeys: Set<PosKey>,
+        pending: MutableMap<PosKey, PendingTypeChange>,
+        budget: MaterializationWriteBudget,
+    ): Boolean {
         val current = block.type
         val decoyBase = if (current in BASE_BLOCKS) null else {
-            if (!plugin.oreRegistry.isEnabledOreMaterial(current.name)) return
-            nativeOreBase(current) ?: return
+            if (!plugin.oreRegistry.isEnabledOreMaterial(current.name)) return true
+            nativeOreBase(current) ?: return true
         }
         val base = decoyBase ?: current
-        if (!newlyExposed(block, removedKeys)) return
+        if (!newlyExposed(block, removedKeys, alreadyExposingKeys)) return true
 
         val coord = ChunkCoord(block.world.name, Math.floorDiv(block.x, 16), Math.floorDiv(block.z, 16))
-        if (plugin.suspendedChunkStore.isSuspended(coord)) return
-        if (isDirty(block)) return
+        if (plugin.suspendedChunkStore.isSuspended(coord)) return true
+        if (isDirty(block)) return true
 
         val epoch = plugin.chunkEpochStore.get(coord)
         val epoched = EpochedChunk(coord.world, coord.cx, coord.cz, epoch)
@@ -88,31 +268,70 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             if (lockedMaterial != null) {
                 Material.matchMaterial(lockedMaterial)
             } else {
-                resolveAndLock(block, base, decoyBase, epoched)
+                resolveAndLock(block, base, decoyBase, epoched, budget)
             }
-            ) ?: return
-        if (target != current) block.setType(target, false)
+            ) ?: return false
+        if (target != current) pending[PosKey(block.x, block.y, block.z)] = PendingTypeChange(block, target)
+        return true
+    }
+
+    /**
+     * 爆炸 blockList 內的候選方塊會在事件返回後直接消失，沒有下一次「首次曝露」可補救。
+     * 已可見原生礦由 continuation 保留；埋藏原生礦與基底則依私有 salt 決算，miss 在掉落前
+     * 改回基底。dirty/非候選材質維持原樣。
+     */
+    private fun resolveRemovedOrigin(
+        block: Block,
+        pending: MutableMap<PosKey, PendingTypeChange>,
+        budget: MaterializationWriteBudget,
+    ): Boolean {
+        val current = block.type
+        val decoyBase = if (current in BASE_BLOCKS) null else {
+            if (!plugin.oreRegistry.isEnabledOreMaterial(current.name)) return true
+            nativeOreBase(current) ?: return true
+        }
+        val base = decoyBase ?: current
+        val coord = ChunkCoord(block.world.name, Math.floorDiv(block.x, 16), Math.floorDiv(block.z, 16))
+        if (plugin.suspendedChunkStore.isSuspended(coord)) return true
+
+        val epoched = EpochedChunk(coord.world, coord.cx, coord.cz, plugin.chunkEpochStore.get(coord))
+        val lockedMaterial = plugin.materializedVeinStore.find(epoched, localPos(block))?.material
+        val target = (
+            if (lockedMaterial != null) {
+                Material.matchMaterial(lockedMaterial)
+            } else {
+                resolveAndLock(block, base, decoyBase, epoched, budget)
+            }
+            ) ?: return false
+        if (target != current) pending[PosKey(block.x, block.y, block.z)] = PendingTypeChange(block, target)
+        return true
     }
 
     /**
      * 沒有鎖定紀錄的座標:呼叫礦脈函數即時決算。
      *
-     * miss(候選球不存在,f 對這個座標沒有任何礦種命中)不寫入 materialized_positions——
+     * miss(候選 shape 不存在,f 對這個座標沒有任何礦種命中)不寫入 materialized_positions——
      * 世界方塊狀態本身已經是永久記錄(`isNewlyExposed` 保證同一座標不會被決算第二次),
      * 補一筆 miss 記錄不會多一層保障,卻會讓每次挖空石都變成一次同步 SQLite 寫入,直接
      * 打破 §15.1「熱路徑無 DB I/O」的紅線(這系統裡大多數的挖掘都是 miss)。
      *
-     * hit 則鎖定觸發座標與其 5×5×5 局部鄰域內、屬於同一顆候選球(用 [ResolvedVein.ball]
-     * 的 contains 判斷)、尚未曝露且不與其他決算表衝突的座標,一次性批次寫入(單一 SQL
+     * hit 則一次鎖定觸發座標與完整有界 shape 內、屬於同一顆礦脈、尚未曝露且不與其他
+     * 決算表衝突的座標,一次性批次寫入(單一 SQL
      * transaction,見 [MaterializedVeinStore.upsertAll][com.tinyyana.kyokalith.vein.MaterializedVeinStore.upsertAll])。
-     * 寫入失敗時整批放棄鄰域鎖定,只試著單獨鎖定觸發座標本身;再失敗就保守停手,回傳 null
-     * 讓呼叫端完全不改動方塊(KYOKALITH_SPEC.md §9.4:決算了卻沒記錄成功,會破壞「不得
+     * 寫入失敗時整批保守停手,回傳 null 讓呼叫端完全不改動方塊
+     * (KYOKALITH_SPEC.md §9.4:決算了卻沒完整記錄成功,會破壞「不得
      * 再次決算」的保證,所以寧可這次不套用,也不能決算後不落地)。
      *
-     * 注意:批次裡的每一筆(包含鄰域內判定為 miss 的座標)都只寫入資料庫/記憶體快取,
+     * 注意:批次裡的每一筆都只寫入資料庫/記憶體快取,
      * 不會對任何尚未曝露的鄰居呼叫 `setType`——回傳值只給觸發座標 [block] 本身使用。
      */
-    private fun resolveAndLock(block: Block, base: Material, decoyBase: Material?, epoched: EpochedChunk): Material? {
+    private fun resolveAndLock(
+        block: Block,
+        base: Material,
+        decoyBase: Material?,
+        epoched: EpochedChunk,
+        budget: MaterializationWriteBudget,
+    ): Material? {
         val world = block.world
         val detailed = plugin.oreVeinResolver.resolveDetailed(
             world.name, epoched.epoch, block.x, block.y, block.z, base.name, world.environment.name,
@@ -122,29 +341,28 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
         val triggerLocal = localPos(block)
         val entries = LinkedHashMap<LocalPos, MaterializedVein>()
         entries[triggerLocal] = MaterializedVein(detailed.result.oreType, detailed.result.veinId, detailed.result.material)
-        entries.putAll(collectNeighborhood(block, detailed, epoched))
+        entries.putAll(collectShape(block, detailed, epoched))
 
-        val locked = plugin.materializedVeinStore.upsertAll(epoched, entries) ||
-            plugin.materializedVeinStore.upsertAll(epoched, mapOf(triggerLocal to entries.getValue(triggerLocal)))
-        return if (locked) triggerMaterial else null
+        if (!budget.reserve(entries.size)) return null
+        return if (plugin.materializedVeinStore.upsertAll(epoched, entries)) triggerMaterial else null
     }
 
     /**
-     * 觸發座標的 5×5×5 局部鄰域(半徑 2,至多 124 個額外座標,常數上限——不掃整顆礦脈的
-     * 理論延伸範圍,也不掃整個 chunk)。只鎖定同時滿足下列全部條件的鄰居:
+     * 一次遍歷完整 shape(最多 32 格)，不靠玩家繼續挖掘時滑動 5×5×5 視窗接力。
+     * 只鎖定同時滿足下列全部條件:
      *
-     * 1. 落在贏得觸發座標的那顆候選球([ResolvedVein.ball])範圍內——「同一顆礦脈」。
-     * 2. 與觸發座標同一個 chunk(半徑 2 理論上可能跨 chunk 邊界;跨界的部分留給該
-     *    chunk 自己未來的首次曝露事件處理,不在這裡展開成多個 chunk/epoch 的批次)。
+     * 1. 落在贏得觸發座標的那顆完整形狀([ResolvedVein.shape])內,且 veinId 相同。
+     * 2. 與觸發座標同一個 chunk。resolver 的 8³ cell 與 chunk 邊界對齊，正常形狀不會
+     *    跨界；這道 guard 保證未來幾何調整也不會展開成多 chunk/epoch 批次。
      * 3. 在世界高度範圍內、目前是可決算材質(base block 或已啟用礦種的誘餌材質)。
      * 4. 未曾曝露過,包含世界生成當下就曝露的情況(六個面目前都不透明)。
-     * 5. 不在 dirty positions、不是已知的 placed eligible ore、還沒被鎖定過。
+     * 5. 不在 dirty positions、還沒被鎖定過。
      *
      * 通過的鄰居各自呼叫一次 `resolve()`(不是直接沿用觸發座標的結果)——鄰居自己的
-     * base 材質、Y 邊界、跨礦種優先序都可能與觸發座標不同,必須獨立決算,球體 contains
-     * 只是用來限定「值得鎖定」的範圍,不是「answer 一定相同」的捷徑。
+     * base 材質、Y 邊界、跨礦種優先序都可能與觸發座標不同,必須獨立決算;只有 veinId
+     * 仍與觸發點相同才寫入,重疊礦種或相鄰 cell 不會被接進本輪鎖定。
      */
-    private fun collectNeighborhood(
+    private fun collectShape(
         origin: Block,
         detailed: ResolvedVein,
         epoched: EpochedChunk,
@@ -152,11 +370,11 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
         val world = origin.world
         val originCoord = ChunkCoord(world.name, Math.floorDiv(origin.x, 16), Math.floorDiv(origin.z, 16))
         val result = LinkedHashMap<LocalPos, MaterializedVein>()
-        for ((dx, dy, dz) in neighborhoodOffsets()) {
-            val nx = origin.x + dx
-            val ny = origin.y + dy
-            val nz = origin.z + dz
-            if (!detailed.ball.contains(nx, ny, nz)) continue
+        for (position in detailed.shape.positions) {
+            val nx = position.x
+            val ny = position.y
+            val nz = position.z
+            if (nx == origin.x && ny == origin.y && nz == origin.z) continue
             if (ny < world.minHeight || ny >= world.maxHeight) continue
             val nCoord = ChunkCoord(world.name, Math.floorDiv(nx, 16), Math.floorDiv(nz, 16))
             if (nCoord != originCoord) continue // 跨 chunk 留給該 chunk 未來自己的首次曝露事件
@@ -164,7 +382,6 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             val nLocal = LocalPos(Math.floorMod(nx, 16), ny, Math.floorMod(nz, 16))
             if (plugin.materializedVeinStore.find(epoched, nLocal) != null) continue // 已鎖定過
             if (plugin.dirtyPositionStore.isDirty(epoched, nLocal)) continue
-            if (plugin.eligiblePlacedOreStore.find(world.name, nx, ny, nz) != null) continue
 
             val nBlock = world.getBlockAt(nx, ny, nz)
             if (hasAnyExposedFace(nBlock)) continue // 已曝露過(含世界生成當下),不可改動
@@ -178,15 +395,19 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             val nResolved = plugin.oreVeinResolver.resolve(
                 world.name, epoched.epoch, nx, ny, nz, nBase.name, world.environment.name,
             )
-            val nMaterial = nResolved?.material ?: nBase.name
-            result[nLocal] = MaterializedVein(nResolved?.oreType, nResolved?.veinId, nMaterial)
+            if (nResolved?.veinId != detailed.result.veinId) continue
+            result[nLocal] = MaterializedVein(nResolved.oreType, nResolved.veinId, nResolved.material)
         }
         return result
     }
 
     /** 目前世界狀態下,這個座標是否已經有任一面透明(=事件前就看得到,不可再改動)。 */
     private fun hasAnyExposedFace(block: Block): Boolean =
-        NEIGHBORS.any { face -> block.getRelative(face).type in EXPOSURE_BLOCKS }
+        NEIGHBORS.any { face ->
+            blockIfLoaded(block.world, block.x + face.modX, block.y + face.modY, block.z + face.modZ)
+                ?.type
+                ?.let(::isExposureMaterial) == true
+        }
 
     /**
      * 讀鄰居目前的即時方塊狀態,轉成與呼叫時機無關的 [NeighborExposure],交給純函數
@@ -194,13 +415,33 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
      * 呼叫(同一 tick 同步執行),origin 位置的 liveTransparent 會是 false,但 inRemovedKeys
      * 為 true 仍會被算成「即將透明」,判定結果與等到下一 tick 呼叫時完全一致。
      */
-    private fun newlyExposed(block: Block, removedKeys: Set<PosKey>): Boolean {
+    private fun newlyExposed(
+        block: Block,
+        removedKeys: Set<PosKey>,
+        alreadyExposingKeys: Set<PosKey>,
+    ): Boolean {
         val neighbors = NEIGHBORS.map { face ->
-            val neighbor = block.getRelative(face)
-            val key = PosKey(neighbor.x, neighbor.y, neighbor.z)
-            NeighborExposure(inRemovedKeys = key in removedKeys, liveTransparent = neighbor.type in EXPOSURE_BLOCKS)
+            val nx = block.x + face.modX
+            val ny = block.y + face.modY
+            val nz = block.z + face.modZ
+            val key = PosKey(nx, ny, nz)
+            val liveTransparent = blockIfLoaded(block.world, nx, ny, nz)
+                ?.type
+                ?.let(::isExposureMaterial) == true
+            NeighborExposure(
+                inRemovedKeys = key in removedKeys,
+                liveTransparent = liveTransparent,
+                removedWasNonOccluding = key in alreadyExposingKeys,
+            )
         }
         return isNewlyExposed(neighbors)
+    }
+
+    /** 未載入 chunk 視為實心且直接跳過,絕不因曝露檢查 force-load 周邊 chunk。 */
+    private fun blockIfLoaded(world: org.bukkit.World, x: Int, y: Int, z: Int): Block? {
+        if (y < world.minHeight || y >= world.maxHeight) return null
+        if (!world.isChunkLoaded(Math.floorDiv(x, 16), Math.floorDiv(z, 16))) return null
+        return world.getBlockAt(x, y, z)
     }
 
     private fun isDirty(block: Block): Boolean =
@@ -214,42 +455,22 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
     private fun localPos(block: Block): LocalPos =
         LocalPos(Math.floorMod(block.x, 16), block.y, Math.floorMod(block.z, 16))
 
+    private fun materializedPosition(block: Block): MaterializedPosition? {
+        val coord = ChunkCoord(block.world.name, Math.floorDiv(block.x, 16), Math.floorDiv(block.z, 16))
+        if (plugin.suspendedChunkStore.isSuspended(coord)) return null
+        val chunk = EpochedChunk(coord.world, coord.cx, coord.cz, plugin.chunkEpochStore.get(coord))
+        return MaterializedPosition(chunk, localPos(block))
+    }
+
+    private fun EpochedChunk.coord(): ChunkCoord = ChunkCoord(world, cx, cz)
+
     private data class PosKey(val x: Int, val y: Int, val z: Int)
+    private data class PendingTypeChange(val block: Block, val target: Material)
+    private enum class AnchorResult { NOT_ANCHOR, LOCKED, FAILED }
 
     companion object {
-        /**
-         * 5×5×5 局部鄰域預決算的半徑上限,與 [com.tinyyana.kyokalith.vein.OreVeinResolver] 的
-         * 礦脈候選球半徑上限（`MAX_VEIN_RADIUS`）**故意分開、互不牽動**:即使礦脈本身的候選球
-         * 半徑之後再調整,單一首次曝露事件一次鎖定的鄰域工作量永遠是這個常數(至多 124 個
-         * 額外座標),不會因為礦脈變大就跟著掃描更大範圍——超出這個視窗的礦脈其餘部分,
-         * 留給玩家未來自然挖到時的下一次首次曝露事件處理。
-         */
-        private const val NEIGHBORHOOD_RADIUS = 2
-
-        /**
-         * 5×5×5 局部鄰域的相對座標偏移(不含 0,0,0 本身),純函數、不碰 Bukkit,方便單元測試
-         * 直接驗證「至多 124 個額外座標」這個硬上限,不需要 MockBukkit 或真正的 World/Block。
-         */
-        fun neighborhoodOffsets(): List<Triple<Int, Int, Int>> = buildList {
-            for (dx in -NEIGHBORHOOD_RADIUS..NEIGHBORHOOD_RADIUS) {
-                for (dy in -NEIGHBORHOOD_RADIUS..NEIGHBORHOOD_RADIUS) {
-                    for (dz in -NEIGHBORHOOD_RADIUS..NEIGHBORHOOD_RADIUS) {
-                        if (dx == 0 && dy == 0 && dz == 0) continue
-                        add(Triple(dx, dy, dz))
-                    }
-                }
-            }
-        }
-
         val BASE_BLOCKS: Set<Material> = setOf(Material.STONE, Material.DEEPSLATE, Material.NETHERRACK)
-
-        private val EXPOSURE_BLOCKS: Set<Material> = setOf(
-            Material.AIR,
-            Material.CAVE_AIR,
-            Material.VOID_AIR,
-            Material.WATER,
-            Material.LAVA,
-        )
+        const val MAX_MATERIALIZED_ROWS_PER_EVENT = 4096
 
         private val NEIGHBORS = listOf(
             BlockFace.UP,
@@ -270,6 +491,61 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             }
         }
 
+        /** 非完整遮蔽方塊旁的礦早已可見，之後移除鐵軌、玻璃或半磚都不可重新決算。 */
+        fun isExposureMaterial(material: Material): Boolean = !material.isOccluding
+
+        /**
+         * 固定上限 frontier growth：vein 最多 maxBlocks；rank 由呼叫端的私有 salt 決定。
+         * 只檢查每個入選格的六個面，所以原生同礦 boundary 最多 6 * maxBlocks；
+         * boundary 不再展開，正是阻止下一格重新 seed 的硬終點。
+         */
+        fun planWorldgenContinuation(
+            origin: VeinPosition,
+            maxBlocks: Int,
+            lookup: (VeinPosition) -> WorldgenContinuationNode?,
+            rank: (VeinPosition) -> Long = { position ->
+                ((position.x.toLong() * 73_856_093L) xor
+                    (position.y.toLong() * 19_349_663L) xor
+                    (position.z.toLong() * 83_492_791L))
+            },
+        ): WorldgenContinuationPlan {
+            require(maxBlocks >= 1)
+            val root = lookup(origin) ?: return WorldgenContinuationPlan(emptyMap(), emptyMap())
+            val vein = linkedMapOf(origin to root)
+            val frontier = linkedMapOf<VeinPosition, WorldgenContinuationNode>()
+            fun addFrontier(current: VeinPosition) {
+                BLOCK_NEIGHBORS.forEach { (dx, dy, dz) ->
+                    val next = VeinPosition(current.x + dx, current.y + dy, current.z + dz)
+                    if (next in vein || next in frontier) return@forEach
+                    val node = lookup(next) ?: return@forEach
+                    val insideRadius =
+                        kotlin.math.abs(next.x - origin.x) <= WORLDGEN_CONTINUATION_RADIUS &&
+                            kotlin.math.abs(next.y - origin.y) <= WORLDGEN_CONTINUATION_RADIUS &&
+                            kotlin.math.abs(next.z - origin.z) <= WORLDGEN_CONTINUATION_RADIUS
+                    if (!insideRadius) return@forEach
+                    if (node.exposed && node.oreType != root.oreType) return@forEach
+                    frontier[next] = node
+                }
+            }
+            addFrontier(origin)
+            while (vein.size < maxBlocks && frontier.isNotEmpty()) {
+                val next = frontier.keys.minWith(compareBy<VeinPosition>(rank).thenBy { it.x }.thenBy { it.y }.thenBy { it.z })
+                val node = frontier.remove(next)!!
+                vein[next] = node
+                addFrontier(next)
+            }
+            val boundary = linkedMapOf<VeinPosition, WorldgenContinuationNode>()
+            vein.keys.forEach { current ->
+                BLOCK_NEIGHBORS.forEach { (dx, dy, dz) ->
+                    val next = VeinPosition(current.x + dx, current.y + dy, current.z + dz)
+                    if (next in vein || next in boundary) return@forEach
+                    val node = lookup(next) ?: return@forEach
+                    if (node.oreType == root.oreType) boundary[next] = node
+                }
+            }
+            return WorldgenContinuationPlan(vein, boundary)
+        }
+
         /**
          * 純判定,不碰 Bukkit Block、不依賴呼叫時機:6 個鄰居中,只要有任一透明鄰居
          * 不屬於本次事件(inRemovedKeys=false 卻 liveTransparent=true),代表事件前就已經
@@ -281,6 +557,7 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
         fun isNewlyExposed(neighbors: List<NeighborExposure>): Boolean {
             var opened = 0
             neighbors.forEach { neighbor ->
+                if (neighbor.removedWasNonOccluding) return false
                 if (neighbor.inRemovedKeys || neighbor.liveTransparent) {
                     if (!neighbor.inRemovedKeys) return false
                     opened++
@@ -288,5 +565,11 @@ class MaterializationService(private val plugin: KyokalithPlugin) {
             }
             return opened > 0
         }
+
+        private val BLOCK_NEIGHBORS = listOf(
+            Triple(1, 0, 0), Triple(-1, 0, 0), Triple(0, 1, 0),
+            Triple(0, -1, 0), Triple(0, 0, 1), Triple(0, 0, -1),
+        )
+        const val WORLDGEN_CONTINUATION_RADIUS = 4
     }
 }

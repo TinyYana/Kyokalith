@@ -115,23 +115,36 @@ f(salt, world, epoch, oreType, cellX, cellY, cellZ) -> 命中/不命中
 ```
 
 - **純函數**:splitmix64 雜湊,不讀世界狀態、不讀 DB。
-- **16³ 的 cell**,候選來自 3×3×3 的鄰居 cell。當**不同礦種**的候選球同時命中同一格時,`priority`(config 欄位,見 CONFIG.md)較大的贏——取代舊版用 `veinId` 雜湊排序的做法(那組排序沒有任何維運意義)。**同一種礦種**的候選球互相重疊時,才退回 `veinId` 當 tie-break(材質反正相同,誰贏都無所謂)。
+- **8³ 的 cell**,每種礦在每個 cell 最多一個候選。較小 cell 恢復遭遇頻率;接受的候選仍會長成固定可重現、六面連通的 voxel 形狀,方塊數精確等於 config 的 `vein_size`(1–32)。
+- **同礦種不串鏈**:相鄰 cell 若產生彼此接觸的同礦形狀,較高的穩定 `veinId` 整顆被抑制。
+- **跨礦種整顆原子仲裁**:只在支援本次查詢 base material 的礦種之間比較;兩種礦的形狀只要有任何重疊,較低 priority 的候選整顆淘汰,同 priority 才由較低 `veinId` 勝出。存活 `veinId` 因此保留完整六面連通形狀與 config 指定的精確格數,不會被另一種礦切成 1–2 格殘片。
 - **冪等**:同樣的輸入永遠同樣的輸出。這就是 `/kyo resolve` 可以安全重跑的原因——你懷疑某個座標漏掉了事件,直接對它重跑一次,結果一定跟「當初應該發生的」一致。
 - **`salt` 讓真礦位置與世界種子脫鉤**:種子地圖網站算得出原版礦在哪,但算不出 Kyokalith 的礦在哪。
 
 **`epoch`**:每個區塊一個計數器。區塊被重生(NatureRevive)時 `epoch += 1`,等於**只對那個區塊**重骰 `f`,不影響世界其他地方。
 
-**Cell 快取**:LRU 20 萬筆,key 含 `epoch`,所以區塊重生後舊項目自然老化掉,不需要失效掃描。快取掉了對正確性沒有影響(純函數重算就好)。
+**Cell 快取**:有界 LRU 20,000 筆,key 含 `epoch`,所以區塊重生後舊項目自然老化掉,不需要失效掃描。快取掉了對正確性沒有影響(純函數重算就好)。
 
 ### 首次曝露時鎖定礦脈形狀(`materialized_positions`)
 
-固定 salt/epoch/config 下 `f` 本身就已經是決定性的——但如果之後 `cell_chance`、`vein_size`、`priority`,或幾何演算法本身被調整(這次改動剛好就對 `ancient_debris` 做了這件事),一顆玩家**正在挖到一半**的礦脈,如果調整剛好卡在玩家兩次挖掘之間,還埋著的另一半有可能算出跟已經挖出來的那一半不一致的結果。為了堵住這個縫:任何座標第一次被決算時,Kyokalith 也會(但**不會放置**)決算 5×5×5 局部鄰域內、幾何上屬於同一顆贏家候選球的其他所有座標,並把這些決定一次性批次鎖進 `materialized_positions`。之後這些座標中任何一個真正首次曝露時(可能是版本更新之後),直接讀鎖定的決定,不再呼叫 `f`。
+固定 salt/epoch/config 下 `f` 本身就是決定性的。第一次命中時會把接受礦脈的**完整 shape**(最多32格)一次持久化;之後這些座標真正首次曝露時直接讀鎖定結果,不再呼叫 `f`。沒有移動視窗,也就沒有靠持續挖掘推進鎖定的接力。
 
 這個機制刻意維持有界、刻意不做任何事:
 
-- **每個事件常數工作量**:最多 124 個額外座標(5×5×5 扣掉觸發座標本身),絕不掃整條礦脈或整個 chunk。比這個視窗還大的礦脈,就讓玩家自然挖過去時一次鎖一小片(每次一個 5×5×5 視窗),分批鎖完。
+- **每次合成礦命中都是常數工作量**:最多 31 個額外座標,絕不掃整條礦脈或整個 chunk。就算相鄰候選材質相同,鎖定也不能跨到另一個 `veinId`。
 - **絕不對未曝露的座標呼叫 setBlock。** 鎖定只是 SQLite(或記憶體快取)裡的一筆紀錄,寫的是「這個座標未來真正首次曝露時該套用什麼材質」——不是 `Block.setType`。一個「已鎖定但還沒曝露」的座標,不管是對客戶端還是對 xray 使用者,跟任何其他還埋著的誘餌沒有任何差別:世界資料裡的材質相同,傳給客戶端的封包位元組相同。只有觸發座標本身——這一個 tick 真正正在首次曝露決算的那一個——才會被呼叫 `setType`。
-- **觸發座標本身的 miss 不會被記錄。** 如果 `f` 完全沒有命中任何礦種,`materialized_positions` 不會寫入任何東西——世界方塊狀態本身已經是永久記錄(`isNewlyExposed` 保證這個座標不會被決算第二次),記錄每一次 miss 只會讓幾乎每次挖石頭都變成一次同步 SQLite 寫入,違反下面「熱路徑不查 DB」的效能契約。但作為某次 hit 的 5×5×5 視窗**內**被順帶判定成 miss 的鄰居,則會照樣記錄(反正那筆寫入本來就要發生)。
+- **miss 一律不記錄。** 普通 miss 不寫入 `materialized_positions`,避免普通挖石頭增加同步 DB I/O。
+
+### 裸露原生礦的延續
+
+生成時已可見的天然礦沒有合成 `veinId`,但不能只是單格外殼。玩家第一次直接挖它時,Kyokalith 只把該格當作可信入口,由私有 salt 長出新的後方延續:
+
+- 目標大小使用該礦設定的 `vein_size`;隱藏順序由 salt 排名,不沿用可由 world seed 預測的原版 component;
+- 六面連通 growth 同時受 Chebyshev 半徑4、已載入/目前 region 擁有的方塊、以及 `vein_size_max` 限制;
+- 入選格與直接相鄰的原生同礦 stop frontier 一次鎖定;任何 keep/stop 鎖定成員都不能再開下一脈;
+- 最多寫入 `vein_size + 6 × vein_size` 筆(全域最大224),跨已載入 chunk 仍用單一 SQLite transaction;
+- 規劃階段絕不 `setType`;每格只在自己真正首次曝露時才套用 keep 或 stop 結果;
+- transaction 失敗時全批 rollback、記錄例外，並在未上鎖誘餌曝露前取消本次可取消的破壞／爆炸／燃燒／實體改方塊／活塞事件。
 
 ---
 
@@ -156,18 +169,37 @@ suspended_chunks(world, cx, cz, reason, created_at, PRIMARY KEY(world, cx, cz))
 
 materialized_positions(world, cx, cz, epoch, lx, y, lz, ore_type, vein_id, material,
                        PRIMARY KEY(world, cx, cz, epoch, lx, y, lz))
-  -- 見上面「首次曝露時鎖定礦脈形狀」。鎖定的是 miss 時 ore_type/vein_id 是 null;
-  -- material 永遠有值(這個座標未來曝露時該套用的方塊)。NatureRevive 重生時
+  -- 作為已接受同一 veinId 命中與有界裸礦 keep/stop 計畫的衍生鎖定快取;普通 miss 不寫入。NatureRevive 重生時
   -- 逐 chunk 清除,做法與 dirty_positions 相同。
 ```
 
-`schema_version` 有寫但沒讀——目前沒有 migration 程式碼。
+生成演算法另有 metadata 版本。v1.3.3 第一次啟動時,若 DB 不是 `vein_algorithm_version = 3`,會在同一交易中**只刪除** `materialized_positions`,再寫入版本3。這會在8³ cell與一次性裸礦延續生效前失效v2稀疏鎖定,但不改 `salt`、chunk epoch、dirty positions、eligible placed ores、suspended chunks 或其他 metadata。
+
+---
+
+## Config schema migration
+
+`config_schema_version` 管 YAML 格式,跟 DB `schema_version`、`vein_algorithm_version` 都是獨立版本。
+
+`KyokalithPlugin.mergeConfigDefaults()` 必須在 `copyDefaults(true)` 前,用 `config.contains("config_schema_version", true)` 讀檔案自己擁有的值;沒有就視為 v1。升級 v1 時,Bukkit defaults 已讓新版 `y_weight_points` 可見,但檔案仍保留舊 Y 範圍。Kyokalith 會把這些繼承路徑明確寫成空清單,再存為 schema 2;`OreRegistry` 因此讀不到曲線,安全退回舊版 `preferred_y` 三角分布。
+
+這是相容性 migration,不是校準 migration。只有完整出貨的 v2 config 可以啟用內建分段曲線,因為它的 Y 範圍、曲線端點、density、遭遇率與精確礦脈大小是一整組量測結果。
+
+---
+
+## 首次曝露事件契約
+
+曝露面依 Bukkit `Material.isOccluding` 判定:回傳 false 就代表不遮蔽。這刻意涵蓋鐵軌、玻璃、半磚等空氣/水/岩漿以外的方塊;旁邊的礦早已對玩家可見,之後移除覆蓋方塊時絕不能重新決算。
+
+所有移除事件 listener 都會在 `MONITOR`、Bukkit 實際套用移除前捕捉 `RemovedBlockSnapshot(block, wasOccluding)`,並在同一 tick 決算。Folia 會先驗證目標加一個 chunk 讀取半徑都由目前 region 擁有;不安全的單方塊/活塞事件取消,foreign explosion entries 從事件清單移除並留在世界。事件前 snapshot 保證已可見礦不會被誤判成首次曝露。
+
+爆炸另有固定硬上限。實體爆炸或方塊爆炸的 `blockList` 超過512筆時,會在 `HIGHEST` 以O(1)取消整個事件;接受的事件不裁切。`MONITOR` 先依座標排序、先鎖所有已可見天然礦入口,再於Bukkit產生掉落物前同時決算被炸掉的體積與新坑洞表面。埋藏誘餌因此不能靠TNT直接炸掉來跳過認證。eligible lifecycle消費同一份最終有界清單。
 
 ---
 
 ## 效能契約(改動前先讀)
 
-**每個事件的成本上限是常數:`被移除的方塊數 × 6`。** 只看六個面鄰居,延後一 tick,而且一定在「擁有該方塊的執行緒」上跑——Spigot/Paper 是主執行緒,Folia 是擁有它的 region。永遠不要改成 async:各個 store 之所以安全,前提就是同一個 chunk 的寫入永遠來自同一條執行緒。
+**每個事件都有硬上限。** 一般移除看六個面;合成礦命中最多鎖32格;單個裸礦入口最多規劃32個keep加192個直接frontier。同一事件的所有鎖定批次共用4096筆寫入上限;超過就取消事件,且不套用任何尚待變更的方塊材質。普通miss仍然不寫入。爆炸超過512筆會在迭代前取消。工作在同一tick、擁有完整讀取半徑的執行緒上跑——Spigot/Paper是主執行緒,Folia是經驗證的owning region;foreign Folia entries留在世界,不建立後續工作。永遠不要改成async。
 
 **不准做的事:**
 

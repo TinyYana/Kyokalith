@@ -79,7 +79,7 @@ class KyokalithDatabase(private val file: File) {
                 )
                 // 2026-07-24 新增(純加法,對舊資料庫安全):首次命中礦脈時鎖定的持久化決算結果,
                 // 見 MaterializedVeinStore / MaterializationService。只有真正命中礦脈(含其
-                // 5x5x5 局部鄰域內同一顆候選球的成員)才寫入這張表;純 miss 不寫,見
+                // 完整有界形狀成員)或有界原生礦延續鎖才寫入這張表;純 miss 不寫,見
                 // MaterializationService 的取捨說明——世界方塊狀態本身已是永久記錄,miss 補寫
                 // 一筆不會多一層保障,卻會讓每次挖空石都變成一次 SQLite 寫入。
                 st.executeUpdate(
@@ -102,6 +102,7 @@ class KyokalithDatabase(private val file: File) {
             }
         }
         ensureSalt()
+        migrateVeinAlgorithm()
     }
 
     fun getMeta(key: String): String? =
@@ -128,5 +129,38 @@ class KyokalithDatabase(private val file: File) {
         setMeta("salt", UUID.randomUUID().toString())
         setMeta("schema_version", "1")
         setMeta("created_at", Instant.now().toString())
+    }
+
+    /**
+     * materialized_positions 只保存尚未曝露座標的衍生決算快取。幾何演算法換版時只失效這張表;
+     * salt、epoch、dirty、eligible、suspended 與已經寫進世界的方塊都不動。
+     */
+    private fun migrateVeinAlgorithm() {
+        connect().use { conn ->
+            conn.autoCommit = false
+            try {
+                val current = conn.prepareStatement("SELECT value FROM meta WHERE key = ?").use { stmt ->
+                    stmt.setString(1, VEIN_ALGORITHM_META_KEY)
+                    stmt.executeQuery().use { rs -> if (rs.next()) rs.getString("value") else null }
+                }
+                if (current != VEIN_ALGORITHM_VERSION) {
+                    conn.createStatement().use { it.executeUpdate("DELETE FROM materialized_positions") }
+                    conn.prepareStatement("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)").use { stmt ->
+                        stmt.setString(1, VEIN_ALGORITHM_META_KEY)
+                        stmt.setString(2, VEIN_ALGORITHM_VERSION)
+                        stmt.executeUpdate()
+                    }
+                }
+                conn.commit()
+            } catch (error: Exception) {
+                conn.rollback()
+                throw error
+            }
+        }
+    }
+
+    companion object {
+        const val VEIN_ALGORITHM_META_KEY = "vein_algorithm_version"
+        const val VEIN_ALGORITHM_VERSION = "3"
     }
 }

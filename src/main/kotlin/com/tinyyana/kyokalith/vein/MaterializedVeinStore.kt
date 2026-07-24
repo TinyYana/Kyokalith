@@ -4,14 +4,16 @@ import com.tinyyana.kyokalith.chunk.EpochedChunk
 import com.tinyyana.kyokalith.chunk.LocalPos
 import com.tinyyana.kyokalith.db.KyokalithDatabase
 import java.util.concurrent.ConcurrentHashMap
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /**
- * 一個座標已鎖定的礦脈決算結果。`material` 是該座標未來真正曝露時應該 setType 成的材質
- * 名稱(miss 時 = 基底石材質,而不是 null——因為 miss 只有在「屬於某個 hit 候選球的
- * 5x5x5 鄰域成員」這個情境下才會被鎖定,見 MaterializationService.collectNeighborhood)。
- * `oreType`/`veinId` 只在 hit 時非 null,純粹給 `/kyo inspect` 除錯用。
+ * 一個座標已鎖定的礦脈決算結果。`material` 是該座標未來真正曝露時應該 setType 成的材質。
+ * 新演算法只批次鎖定同一個 veinId 的 hit；nullable 欄位仍保留，讓舊 schema 與既有讀取
+ * API 相容。`oreType`/`veinId` 也提供 `/kyo inspect` 除錯使用。
  */
 data class MaterializedVein(val oreType: String?, val veinId: String?, val material: String)
+data class MaterializedPosition(val chunk: EpochedChunk, val pos: LocalPos)
 
 /**
  * materialized_positions 的記憶體快取 + 持久化層。讀取路徑比照 [com.tinyyana.kyokalith.chunk.DirtyPositionStore]
@@ -31,8 +33,13 @@ class MaterializedVeinStore(private val db: KyokalithDatabase) {
      * (呼叫端負責過濾跨 chunk 的鄰居,見 collectNeighborhood 的 sameChunk 檢查)。
      */
     fun upsertAll(chunk: EpochedChunk, entries: Map<LocalPos, MaterializedVein>): Boolean {
+        return upsertAll(entries.mapKeys { (pos, _) -> MaterializedPosition(chunk, pos) })
+    }
+
+    /** 跨 chunk 的同一批鎖定仍共用一個 transaction，避免只寫入半顆礦脈。 */
+    fun upsertAll(entries: Map<MaterializedPosition, MaterializedVein>): Boolean {
         if (entries.isEmpty()) return true
-        val success = runCatching {
+        val failure = runCatching {
             db.connect().use { conn ->
                 conn.autoCommit = false
                 try {
@@ -43,14 +50,14 @@ class MaterializedVeinStore(private val db: KyokalithDatabase) {
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """.trimIndent(),
                     ).use { stmt ->
-                        entries.forEach { (pos, vein) ->
-                            stmt.setString(1, chunk.world)
-                            stmt.setInt(2, chunk.cx)
-                            stmt.setInt(3, chunk.cz)
-                            stmt.setInt(4, chunk.epoch)
-                            stmt.setInt(5, pos.lx)
-                            stmt.setInt(6, pos.y)
-                            stmt.setInt(7, pos.lz)
+                        entries.forEach { (position, vein) ->
+                            stmt.setString(1, position.chunk.world)
+                            stmt.setInt(2, position.chunk.cx)
+                            stmt.setInt(3, position.chunk.cz)
+                            stmt.setInt(4, position.chunk.epoch)
+                            stmt.setInt(5, position.pos.lx)
+                            stmt.setInt(6, position.pos.y)
+                            stmt.setInt(7, position.pos.lz)
                             stmt.setString(8, vein.oreType)
                             stmt.setString(9, vein.veinId)
                             stmt.setString(10, vein.material)
@@ -64,9 +71,15 @@ class MaterializedVeinStore(private val db: KyokalithDatabase) {
                     throw e
                 }
             }
-        }.isSuccess
-        if (success) loadIfAbsent(chunk).putAll(entries)
-        return success
+        }.exceptionOrNull()
+        if (failure == null) {
+            entries.entries.groupBy { it.key.chunk }.forEach { (chunk, chunkEntries) ->
+                loadIfAbsent(chunk).putAll(chunkEntries.associate { it.key.pos to it.value })
+            }
+        } else {
+            LOGGER.log(Level.SEVERE, "Failed to persist bounded materialization lock; transaction rolled back", failure)
+        }
+        return failure == null
     }
 
     /** NatureRevive 再生後,舊 epoch 的鎖定結果可清除,否則新一輪誘餌會被舊決定卡住(比照 DirtyPositionStore.clearEpoch)。 */
@@ -116,4 +129,8 @@ class MaterializedVeinStore(private val db: KyokalithDatabase) {
                 }
             }
         }
+
+    companion object {
+        private val LOGGER: Logger = Logger.getLogger(MaterializedVeinStore::class.java.name)
+    }
 }

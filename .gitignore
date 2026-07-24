@@ -20,3 +20,8 @@ hs_err_pid*
 
 # Common working directory
 run
+
+# 本機隔離的 Gradle distribution / test home / Kotlin 增量快取
+.gradle-runtime/
+.gradle-test-home/
+.kotlin/

@@ -115,23 +115,36 @@ f(salt, world, epoch, oreType, cellX, cellY, cellZ) -> hit / miss
 ```
 
 - **Pure function**: splitmix64 hashing; reads no world state, no DB.
-- **16³ cells**; candidates come from the 3×3×3 neighborhood of cells. When *different ore types'* spheres both cover a block, the higher `priority` (config field, §CONFIG.md) wins — this replaced an earlier hash-based (`veinId`) tie-break that had no operational meaning. `veinId` is still the tie-break when it's the *same* ore type's spheres overlapping (material is identical either way, so it doesn't matter which one "wins").
+- **8³ cells**, with at most one candidate per ore type and cell. The smaller cell restores encounter frequency while each accepted candidate remains a deterministic, face-connected voxel shape whose block count is exactly the configured `vein_size` (1–32).
+- **No same-ore chains**: if adjacent cells produce touching shapes of the same ore, the candidate with the higher stable `veinId` is suppressed in full.
+- **Atomic cross-ore arbitration**: among definitions that support the queried base material, if two ore shapes overlap at all, the lower-priority candidate is discarded in full; equal priority falls back to lower `veinId`. A surviving `veinId` therefore retains its complete face-connected shape and exact configured block count—never a 1–2 block remnant cut out by another ore.
 - **Idempotent**: same inputs, same output, forever. That's why `/kyo resolve` is safe to re-run — if you suspect a coordinate missed its event, re-run it and the result is guaranteed identical to "what should have happened".
 - **`salt` decouples real ore from the world seed**: seed-map sites can compute where vanilla ore generated, but not where Kyokalith's ore is.
 
 **`epoch`**: a per-chunk counter. When a chunk is regenerated (NatureRevive), `epoch += 1` — re-rolling `f` **for that chunk only**, leaving the rest of the world alone.
 
-**Cell cache**: LRU, 200k entries, key includes `epoch`, so entries for regenerated chunks age out naturally — no invalidation sweeps. Cache misses cost nothing correctness-wise (pure function, just recompute).
+**Cell cache**: bounded LRU, 20,000 entries; the key includes `epoch`, so entries for regenerated chunks age out naturally — no invalidation sweeps. Cache misses cost nothing correctness-wise (pure function, just recompute).
 
 ### Locking a vein's shape at first exposure (`materialized_positions`)
 
-`f` alone is already deterministic for a fixed salt/epoch/config — but if `cell_chance`, `vein_size`, `priority`, or the geometry code itself is ever tuned later (exactly what this changelog entry did to `ancient_debris`), a vein that a player is *mid-way through excavating* could otherwise have its still-buried other half resolve differently than the half already dug out, if the tuning landed between two of the player's own digging sessions. To close that gap: the first time any position in a vein is resolved, Kyokalith also resolves (but does **not** place) every other position within a **5×5×5 window centered on that trigger block** that geometrically belongs to the same winning candidate sphere, and locks all of those decisions into `materialized_positions` in one batch. The next time any of those positions is genuinely first-exposed (potentially versions/tunings later), it reads the locked decision instead of calling `f` again.
+`f` alone is deterministic for fixed salt/epoch/config. On the first hit, Kyokalith persists the accepted vein's **complete shape** (at most 32 positions) in one batch. The next time one of those positions is genuinely first-exposed, it reads the locked decision instead of calling `f` again. There is no moving window and therefore no mining-driven lock relay.
 
 This is deliberately bounded and deliberately inert:
 
-- **Constant work per event**: at most 124 extra positions (5×5×5 minus the trigger itself), never a vein/chunk scan. A vein bigger than that window just gets locked incrementally, one 5×5×5 slice at a time, as the player naturally tunnels through it.
+- **Constant work per synthetic hit**: at most 31 extra positions, never a vein/chunk scan. The lock cannot bridge to an adjacent candidate, even if it has the same material.
 - **Never writes a block for an unexposed position.** The lock is a row in SQLite (or the in-memory cache) that says "when this coordinate is *later* first-exposed, apply this material" — it is not `Block.setType`. A locked-but-unexposed position is, in every way a client or an x-ray user can observe, identical to any other still-buried decoy: same material in the world data, same bytes in the chunk packet. Only the trigger position — the one actually undergoing first-exposure resolution *this* tick — ever gets `setType` called on it.
-- **Misses aren't recorded for the trigger position itself.** If `f` finds no vein at all, nothing is written to `materialized_positions` — the physical block state (already permanently set, since `isNewlyExposed` guarantees this exact coordinate is never re-resolved) is protection enough, and recording every miss would mean a synchronous SQLite write on nearly every block broken, which breaks the "no DB I/O on the hot path" contract below. Misses picked up as *part of* a hit's 5×5×5 window **are** recorded, since that write is already happening anyway.
+- **Misses are not recorded.** A normal miss writes nothing to `materialized_positions`. This prevents ordinary stone mining from adding synchronous DB I/O.
+
+### Visible vanilla ore continuation
+
+An already-visible natural ore has no synthetic `veinId`, but it must not be a one-block shell. On the first direct player break, Kyokalith treats that block only as an authenticated entrance and grows a new continuation using the private salt:
+
+- target size is the ore's configured `vein_size`; hidden order is salt-ranked and does not follow the world-seed vanilla component;
+- growth is face-connected, limited to Chebyshev radius 4, loaded/owned blocks, and the same fixed `vein_size_max`;
+- the selected positions plus the directly adjacent original same-ore stop frontier are locked once; locked keep/stop members cannot seed another continuation;
+- at most `vein_size + 6 × vein_size` rows are written (224 at the global maximum), across loaded chunk boundaries in one SQLite transaction;
+- planning never calls `setType`; each selected or stop position changes only when it is itself first exposed;
+- if the transaction fails, every row rolls back, the exception is logged, and the triggering cancellable exposure event is cancelled before it can reveal an unlocked decoy.
 
 ---
 
@@ -156,18 +169,38 @@ suspended_chunks(world, cx, cz, reason, created_at, PRIMARY KEY(world, cx, cz))
 
 materialized_positions(world, cx, cz, epoch, lx, y, lz, ore_type, vein_id, material,
                        PRIMARY KEY(world, cx, cz, epoch, lx, y, lz))
-  -- see "Locking a vein's shape at first exposure" above. ore_type/vein_id are null on a
-  -- locked miss; material is always set (the block to apply once this position is exposed).
+  -- derived lock cache for accepted same-vein hits and bounded visible-ore keep/stop plans;
+  -- never stores ordinary misses
   -- Cleared per-chunk on NatureRevive regeneration, same as dirty_positions.
 ```
 
-`schema_version` is written but never read — there is no migration code yet.
+The generation algorithm has a separate metadata version. On first startup of v1.3.3, any database without `vein_algorithm_version = 3` deletes **only** `materialized_positions`, then records version 3 in the same transaction. This invalidates sparse v2 locks before 8³ cells and one-shot continuation plans take effect, without changing `salt`, chunk epochs, dirty positions, eligible placed ores, suspended chunks, or other metadata.
+
+---
+
+## Config-schema migration
+
+`config_schema_version` versions the YAML shape; it is independent of both database `schema_version` and `vein_algorithm_version`.
+
+`KyokalithPlugin.mergeConfigDefaults()` must read the file-owned value with `config.contains("config_schema_version", true)` before calling `copyDefaults(true)`. Missing means v1. When upgrading v1, Bukkit has already made bundled v2 `y_weight_points` visible as defaults even though the file still owns old Y ranges. Kyokalith explicitly writes empty lists for those inherited paths, then saves schema 2. `OreRegistry` consequently sees no curve and uses the legacy triangular `preferred_y` fallback.
+
+This is a compatibility migration, not a calibration migration. Only a complete shipped v2 config may enable the bundled piecewise curves, because its Y ranges, curve endpoints, density, encounter chance, and exact vein sizes were measured as one set.
+
+---
+
+## First-exposure event contract
+
+An exposure face is any material for which Bukkit `Material.isOccluding` is false. This deliberately includes rails, glass, slabs, and other blocks beyond air/water/lava: ore beside one of them was already player-visible and must never be re-resolved when that covering block is removed.
+
+All removal listeners capture a `RemovedBlockSnapshot(block, wasOccluding)` at `MONITOR`, before Bukkit applies the removal, and resolve in the same tick. Folia first verifies ownership of the target plus one chunk of read radius. Unsafe single-block/piston events are cancelled; foreign explosion entries are removed from the event list and remain in the world. The captured pre-removal state prevents timing from turning an already-visible ore into a false first exposure.
+
+Explosion lists have an additional hard boundary. At `HIGHEST`, an entity or block explosion with more than 512 `blockList` entries is cancelled in O(1); accepted events are not trimmed. At `MONITOR`, coordinates are sorted for deterministic arbitration, visible natural-ore anchors are locked first, then both the destroyed volume and newly exposed crater surface are resolved before Bukkit creates drops. This prevents a buried decoy directly hit by TNT from bypassing authentication. Eligible-lifecycle cleanup consumes the same final bounded list.
 
 ---
 
 ## Performance contract (read before changing anything)
 
-**Per-event cost is bounded by a constant: `removed blocks × 6`.** Six face neighbors only, deferred one tick, always on the thread that owns the block — the main thread on Spigot/Paper, the owning region on Folia. Never async: the stores are only safe because every write to a given chunk arrives from that chunk's owning thread.
+**Per-event cost is bounded.** Ordinary removal checks six faces; a synthetic hit locks at most 32 positions; one visible natural-ore entrance plans at most 32 keep positions plus 192 direct frontier positions. All lock batches in one event share a hard 4,096-row write budget; exceeding it cancels the event before any pending block-type changes are applied. Ordinary misses still write nothing. Explosions above 512 entries are cancelled before iteration. Work runs in the same tick on the thread that owns the full read radius — the main thread on Spigot/Paper, the verified owning region on Folia. Foreign Folia entries stay in the world, never queued as follow-up work. Never async.
 
 **Forbidden:**
 

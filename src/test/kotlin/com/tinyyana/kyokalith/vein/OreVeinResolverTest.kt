@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class OreVeinResolverTest {
 
@@ -26,8 +27,8 @@ class OreVeinResolverTest {
     }
 
     /**
-     * MAX_VEIN_RADIUS 上限後,單一固定座標不再保證命中(半徑上限後的球體只佔 cell 一小部分),
-     * 不能再靠超大 vein_size 保證命中。改成在一個 cell 內掃描找出第一個真實命中座標,
+     * 有界 voxel shape 只佔 cell 一小部分,不能再靠超大 vein_size 保證固定座標命中。
+     * 改成在多個 cell 內掃描找出第一個真實命中座標,
      * 命中一定存在(cell_chance=1.0、density=1.0、preferred_y=0 使 y=0 附近 weight≈1)。
      */
     private fun findHitCoordinate(
@@ -60,6 +61,26 @@ class OreVeinResolverTest {
 
         assertNotNull(first)
         assertEquals(first, second)
+    }
+
+    @Test
+    fun `worldgen continuation order is deterministic and salt protected`() {
+        val origin = VeinPosition(-1, 16, 0)
+        val positions = listOf(
+            VeinPosition(0, 16, 0),
+            VeinPosition(-2, 16, 0),
+            VeinPosition(-1, 17, 0),
+            VeinPosition(-1, 16, 1),
+        )
+        val first = OreVeinResolver("private-salt-a", registry())
+        val second = OreVeinResolver("private-salt-b", registry())
+        fun ranks(resolver: OreVeinResolver) = positions.map {
+            resolver.worldgenContinuationRank("world", 0, "test", origin, it)
+        }
+
+        assertEquals(ranks(first), ranks(first))
+        assertNotEquals(ranks(first), ranks(second), "world seed 相同但 salt 不同時，裸礦後方走向必須不同")
+        assertEquals(32, first.worldgenContinuationSize("world", 0, "test", origin))
     }
 
     @Test
@@ -135,9 +156,9 @@ class OreVeinResolverTest {
     }
 
     /**
-     * 覆蓋跨礦種重疊時的仲裁邏輯(取代舊版的 veinId 雜湊排序):兩個礦種的候選球都用
-     * cell_chance=1.0、同樣的 vein_size/preferred_y,保證每個 cell 都會出現候選球,掃描
-     * 找出兩者候選球實際重疊的座標,驗證 priority 較高者贏,且重複呼叫結果一致。
+     * 覆蓋跨礦種重疊時的原子仲裁:兩個礦種都用 cell_chance=1.0 與 size=32,掃描找出
+     * 形狀重疊的 cell。priority 較高者保留完整形狀；低 priority 候選整顆淘汰，
+     * 不可在重疊邊緣留下只有 1–2 格的殘脈。
      */
     @Test
     fun `higher priority ore wins an overlap and the winner is reproducible`() {
@@ -149,8 +170,8 @@ class OreVeinResolverTest {
             config.set("ores.$oreType.y_max", 64)
             config.set("ores.$oreType.preferred_y", 0)
             config.set("ores.$oreType.density", 1.0)
-            config.set("ores.$oreType.vein_size_min", 10)
-            config.set("ores.$oreType.vein_size_max", 10)
+            config.set("ores.$oreType.vein_size_min", 32)
+            config.set("ores.$oreType.vein_size_max", 32)
             config.set("ores.$oreType.cell_chance", 1.0)
             config.set("ores.$oreType.priority", priority)
             return OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow()
@@ -166,8 +187,8 @@ class OreVeinResolverTest {
         combinedConfig.set("ores.common.y_max", 64)
         combinedConfig.set("ores.common.preferred_y", 0)
         combinedConfig.set("ores.common.density", 1.0)
-        combinedConfig.set("ores.common.vein_size_min", 10)
-        combinedConfig.set("ores.common.vein_size_max", 10)
+        combinedConfig.set("ores.common.vein_size_min", 32)
+        combinedConfig.set("ores.common.vein_size_max", 32)
         combinedConfig.set("ores.common.cell_chance", 1.0)
         combinedConfig.set("ores.common.priority", 10)
         combinedConfig.set("ores.rare.enabled", true)
@@ -176,8 +197,8 @@ class OreVeinResolverTest {
         combinedConfig.set("ores.rare.y_max", 64)
         combinedConfig.set("ores.rare.preferred_y", 0)
         combinedConfig.set("ores.rare.density", 1.0)
-        combinedConfig.set("ores.rare.vein_size_min", 10)
-        combinedConfig.set("ores.rare.vein_size_max", 10)
+        combinedConfig.set("ores.rare.vein_size_min", 32)
+        combinedConfig.set("ores.rare.vein_size_max", 32)
         combinedConfig.set("ores.rare.cell_chance", 1.0)
         combinedConfig.set("ores.rare.priority", 90)
         val combined = OreVeinResolver("salt", OreRegistry.load(combinedConfig.getConfigurationSection("ores")).getOrThrow())
@@ -195,7 +216,7 @@ class OreVeinResolverTest {
                 }
             }
         }
-        val (x, y, z) = overlap ?: error("測試設定下掃描範圍內找不到兩種礦候選球重疊的座標")
+        val (x, y, z) = overlap ?: error("測試設定下掃描範圍內找不到兩種礦候選形狀重疊的座標")
 
         val first = combined.resolve("world", 0, x, y, z, "STONE")
         val second = combined.resolve("world", 0, x, y, z, "STONE")
@@ -203,30 +224,149 @@ class OreVeinResolverTest {
         assertEquals("rare", first.oreType, "priority 較高(90 > 10)的礦種應該贏")
         assertEquals(90, first.priority)
         assertEquals(first, second, "重複呼叫必須得到一模一樣的贏家,不能忽勝忽敗")
+
+        val commonShape = commonOnly.resolveDetailed("world", 0, x, y, z, "STONE")!!.shape
+        assertTrue(
+            commonShape.positions.none { pos ->
+                combined.resolve("world", 0, pos.x, pos.y, pos.z, "STONE")?.oreType == "common"
+            },
+            "跨礦種形狀重疊後，低 priority 候選必須整顆淘汰，不能留下殘脈",
+        )
+        val rareShape = rareOnly.resolveDetailed("world", 0, x, y, z, "STONE")!!.shape
+        assertTrue(
+            rareShape.positions.all { pos ->
+                combined.resolve("world", 0, pos.x, pos.y, pos.z, "STONE")?.oreType == "rare"
+            },
+            "獲勝礦脈必須保留完整連通形狀",
+        )
+    }
+
+    @Test
+    fun `priority contender without the queried base material cannot suppress a valid ore`() {
+        fun registry(includeCommon: Boolean, includeRare: Boolean): OreRegistry {
+            val config = YamlConfiguration()
+            if (includeCommon) {
+                config.set("ores.common.enabled", true)
+                config.set("ores.common.materials.stone", "IRON_ORE")
+                config.set("ores.common.y_min", -64)
+                config.set("ores.common.y_max", 64)
+                config.set("ores.common.preferred_y", 0)
+                config.set("ores.common.density", 1.0)
+                config.set("ores.common.vein_size_min", 32)
+                config.set("ores.common.vein_size_max", 32)
+                config.set("ores.common.cell_chance", 1.0)
+                config.set("ores.common.priority", 10)
+            }
+            if (includeRare) {
+                config.set("ores.rare.enabled", true)
+                config.set("ores.rare.materials.deepslate", "DEEPSLATE_DIAMOND_ORE")
+                config.set("ores.rare.y_min", -64)
+                config.set("ores.rare.y_max", 64)
+                config.set("ores.rare.preferred_y", 0)
+                config.set("ores.rare.density", 1.0)
+                config.set("ores.rare.vein_size_min", 32)
+                config.set("ores.rare.vein_size_max", 32)
+                config.set("ores.rare.cell_chance", 1.0)
+                config.set("ores.rare.priority", 90)
+            }
+            return OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow()
+        }
+
+        val commonOnly = OreVeinResolver("material-priority", registry(includeCommon = true, includeRare = false))
+        val rareOnly = OreVeinResolver("material-priority", registry(includeCommon = false, includeRare = true))
+        val combined = OreVeinResolver("material-priority", registry(includeCommon = true, includeRare = true))
+        var overlap: Triple<Int, Int, Int>? = null
+        outer@ for (x in 0 until 96) {
+            for (y in -32 until 32) {
+                for (z in 0 until 96) {
+                    if (commonOnly.resolve("world", 0, x, y, z, "STONE") != null &&
+                        rareOnly.resolve("world", 0, x, y, z, "DEEPSLATE") != null
+                    ) {
+                        overlap = Triple(x, y, z)
+                        break@outer
+                    }
+                }
+            }
+        }
+        val (x, y, z) = overlap ?: error("測試範圍內找不到 stone/deepslate 候選重疊")
+
+        assertEquals("common", combined.resolve("world", 0, x, y, z, "STONE")?.oreType)
+        assertEquals("rare", combined.resolve("world", 0, x, y, z, "DEEPSLATE")?.oreType)
     }
 
     /**
-     * OreVeinResolver.resolveDetailed 附帶的 [VeinBall] 讓呼叫端(MaterializationService)可以
-     * 判斷「另一個座標是否屬於同一顆礦脈」——這裡驗證:落在同一顆候選球內的不同座標,各自
+     * OreVeinResolver.resolveDetailed 附帶的 [VeinShape] 讓呼叫端(MaterializationService)可以
+     * 判斷「另一個座標是否屬於同一顆礦脈」——這裡驗證:同一個 shape 內的不同座標,各自
      * 獨立呼叫 resolveDetailed,得到的都是同一個 veinId(同一顆礦脈),且多次呼叫結果一致。
      */
     @Test
-    fun `distinct coordinates within the same candidate ball resolve to the same vein consistently`() {
+    fun `distinct coordinates within the same shape resolve to the same vein consistently`() {
         val resolver = OreVeinResolver("salt", registry())
         val (x, y, z) = findHitCoordinate(resolver)
         val trigger = resolver.resolveDetailed("world", 0, x, y, z, "STONE") ?: error("預期命中卻沒有結果")
 
-        val neighborOffsets = listOf(Triple(1, 0, 0), Triple(0, 1, 0), Triple(0, 0, 1), Triple(-1, -1, -1))
-        neighborOffsets.forEach { (dx, dy, dz) ->
-            val nx = x + dx
-            val ny = y + dy
-            val nz = z + dz
-            if (!trigger.ball.contains(nx, ny, nz)) return@forEach // 邊界附近不是每個偏移都保證落在球內
-            val first = resolver.resolveDetailed("world", 0, nx, ny, nz, "STONE")
-            val second = resolver.resolveDetailed("world", 0, nx, ny, nz, "STONE")
-            assertNotNull(first, "($nx,$ny,$nz) 落在候選球內,理論上必定命中")
-            assertEquals(trigger.result.veinId, first.result.veinId, "同一顆候選球內的座標必須是同一個 veinId")
+        assertEquals(32, trigger.shape.blockCount)
+        trigger.shape.positions.take(8).forEach { position ->
+            val first = resolver.resolveDetailed("world", 0, position.x, position.y, position.z, "STONE")
+            val second = resolver.resolveDetailed("world", 0, position.x, position.y, position.z, "STONE")
+            assertNotNull(first, "$position 落在同一個 shape 內,理論上必定命中")
+            assertEquals(trigger.result.veinId, first.result.veinId, "同一個候選形狀內的座標必須是同一個 veinId")
             assertEquals(first, second, "同座標重複決算必須完全一致")
+        }
+    }
+
+    @Test
+    fun `one veinId never exceeds configured size and size changes the actual shape`() {
+        fun resolver(size: Int): OreVeinResolver {
+            val config = YamlConfiguration()
+            config.set("ores.test.enabled", true)
+            config.set("ores.test.materials.stone", "IRON_ORE")
+            config.set("ores.test.y_min", -64)
+            config.set("ores.test.y_max", 64)
+            config.set("ores.test.preferred_y", 0)
+            config.set("ores.test.density", 1.0)
+            config.set("ores.test.vein_size_min", size)
+            config.set("ores.test.vein_size_max", size)
+            config.set("ores.test.cell_chance", 1.0)
+            return OreVeinResolver("size-contract", OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow())
+        }
+
+        listOf(1, 8, 14, 32).forEach { size ->
+            val current = resolver(size)
+            val (x, y, z) = findHitCoordinate(current)
+            val shape = current.resolveDetailed("world", 0, x, y, z, "STONE")!!.shape
+            assertEquals(size, shape.blockCount, "vein_size=$size 應直接等於單一 veinId 的實際方塊數")
+        }
+    }
+
+    @Test
+    fun `negative coordinates and chunk edges are deterministic without joining adjacent cells`() {
+        val resolver = OreVeinResolver("negative-and-boundary", registry())
+        val probes = listOf(-33, -32, -17, -16, -1, 0, 15, 16, 31, 32)
+        probes.forEach { x ->
+            probes.forEach { z ->
+                val first = resolver.resolve("world", 0, x, 0, z, "STONE")
+                val second = resolver.resolve("world", 0, x, 0, z, "STONE")
+                assertEquals(first, second, "($x,0,$z) 在負座標或 chunk 邊界必須穩定")
+            }
+        }
+
+        val hits = HashMap<VeinPosition, String>()
+        for (x in -32 until 32) for (y in -16 until 16) for (z in -32 until 32) {
+            resolver.resolve("world", 0, x, y, z, "STONE")?.let { hits[VeinPosition(x, y, z)] = it.veinId }
+        }
+        hits.forEach { (position, veinId) ->
+            listOf(
+                VeinPosition(position.x + 1, position.y, position.z),
+                VeinPosition(position.x - 1, position.y, position.z),
+                VeinPosition(position.x, position.y + 1, position.z),
+                VeinPosition(position.x, position.y - 1, position.z),
+                VeinPosition(position.x, position.y, position.z + 1),
+                VeinPosition(position.x, position.y, position.z - 1),
+            ).forEach { neighbor ->
+                val other = hits[neighbor]
+                assertTrue(other == null || other == veinId, "相鄰 cell 的不同 veinId 不得六面連通:$veinId / $other")
+            }
         }
     }
 

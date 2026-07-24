@@ -109,7 +109,28 @@ class KyokalithPlugin : JavaPlugin() {
     private fun mergeConfigDefaults() {
         saveDefaultConfig()
         reloadConfig()
+        val previousSchemaVersion = if (config.contains("config_schema_version", true)) {
+            config.getInt("config_schema_version")
+        } else {
+            1
+        }
         config.options().copyDefaults(true)
+        if (previousSchemaVersion < CONFIG_SCHEMA_VERSION_WITH_Y_CURVES) {
+            config.getConfigurationSection("ores")?.getKeys(false)?.forEach { oreType ->
+                // Bukkit 的 copyDefaults 會把新 list 塞進舊 ore section，卻保留舊 y_min/y_max，
+                // 形成端點不一致的混合設定。空 list 明確覆蓋 inherited default，安全退回
+                // preferred_y；patch 內的完整 v2 config 才啟用新曲線。
+                config.set("ores.$oreType.y_weight_points", emptyList<Map<String, Any>>())
+            }
+            logger.warning(
+                "Legacy config detected: inherited y_weight_points were disabled; " +
+                    "install the bundled v2 config to enable calibrated height curves",
+            )
+        }
         saveConfig()
+    }
+
+    companion object {
+        private const val CONFIG_SCHEMA_VERSION_WITH_Y_CURVES = 2
     }
 }

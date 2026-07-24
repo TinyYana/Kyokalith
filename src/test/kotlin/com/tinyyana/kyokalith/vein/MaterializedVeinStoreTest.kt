@@ -7,6 +7,7 @@ import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -55,6 +56,58 @@ class MaterializedVeinStoreTest {
 
             entries.forEach { (pos, vein) -> assertEquals(vein, store.find(chunk, pos)) }
             assertEquals(entries.size, store.count())
+        } finally {
+            file.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `one transaction locks a continuation across negative chunk boundary`() {
+        val file = createTempFile(suffix = ".db")
+        try {
+            val db = KyokalithDatabase(file.toFile())
+            db.init()
+            val store = MaterializedVeinStore(db)
+            val left = MaterializedPosition(EpochedChunk("world", -1, 0, 2), LocalPos(15, 12, 0))
+            val right = MaterializedPosition(EpochedChunk("world", 0, 0, 7), LocalPos(0, 12, 0))
+            val entries = mapOf(
+                left to MaterializedVein("iron", "worldgen:test", "IRON_ORE"),
+                right to MaterializedVein("iron", "worldgen:test", "DEEPSLATE_IRON_ORE"),
+            )
+
+            assertTrue(store.upsertAll(entries))
+            val reloaded = MaterializedVeinStore(db)
+            entries.forEach { (position, vein) ->
+                assertEquals(vein, reloaded.find(position.chunk, position.pos))
+            }
+        } finally {
+            file.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `cross chunk continuation rolls back every row when one chunk fails`() {
+        val file = createTempFile(suffix = ".db")
+        try {
+            val db = KyokalithDatabase(file.toFile())
+            db.init()
+            db.connect().use { conn ->
+                conn.createStatement().use {
+                    it.executeUpdate(
+                        "CREATE TRIGGER reject_second_chunk BEFORE INSERT ON materialized_positions " +
+                            "WHEN NEW.cx = 0 BEGIN SELECT RAISE(ABORT, 'test rollback'); END",
+                    )
+                }
+            }
+            val store = MaterializedVeinStore(db)
+            val left = MaterializedPosition(EpochedChunk("world", -1, 0, 0), LocalPos(15, 12, 0))
+            val right = MaterializedPosition(EpochedChunk("world", 0, 0, 0), LocalPos(0, 12, 0))
+            val vein = MaterializedVein("iron", "worldgen:test", "IRON_ORE")
+
+            assertFalse(store.upsertAll(linkedMapOf(left to vein, right to vein)))
+            assertEquals(0, store.count())
+            assertNull(store.find(left.chunk, left.pos))
+            assertNull(store.find(right.chunk, right.pos))
         } finally {
             file.deleteIfExists()
         }

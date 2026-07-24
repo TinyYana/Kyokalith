@@ -12,10 +12,7 @@ object Schedulers {
         Class.forName("io.papermc.paper.threadedregions.RegionizedServer")
     }.isSuccess
 
-    /**
-     * 延後到下一個 tick,在擁有該座標的執行緒上跑。事件路徑一律用這個:
-     * 決算依賴「移除已生效」的下一 tick 語意,當場跑會在方塊還沒消失時決算。
-     */
+    /** 延後到下一個 tick,在擁有該座標的執行緒上跑;dirty 標記與 fallback 工作使用。 */
     fun atRegion(plugin: Plugin, location: Location, task: Runnable) {
         if (isFolia) FoliaSchedulers.atRegion(plugin, location, task) else Bukkit.getScheduler().runTask(plugin, task)
     }
@@ -36,6 +33,13 @@ object Schedulers {
             else -> Bukkit.getScheduler().runTask(plugin, task)
         }
     }
+
+    /**
+     * Paper/Spigot 的主執行緒擁有整個世界；Folia 則必須明確確認目前 region 同時擁有
+     * 目標 chunk 與周圍讀取半徑，不能因事件通常有 buffer 就假設一定安全。
+     */
+    fun isOwnedByCurrentRegion(location: Location, squareRadiusChunks: Int = 0): Boolean =
+        !isFolia || FoliaSchedulers.isOwnedByCurrentRegion(location, squareRadiusChunks)
 
     /** [atRegionNow] 的 entity 版:資料擁有者是實體所在 region(如塞背包)。 */
     fun atEntityNow(plugin: Plugin, entity: Entity, task: Runnable) {
