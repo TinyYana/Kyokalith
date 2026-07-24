@@ -134,6 +134,102 @@ class OreVeinResolverTest {
         assertNotNull(resolver.resolve("world", 0, x, y, z, "STONE", dimension = "NETHER"))
     }
 
+    /**
+     * 覆蓋跨礦種重疊時的仲裁邏輯(取代舊版的 veinId 雜湊排序):兩個礦種的候選球都用
+     * cell_chance=1.0、同樣的 vein_size/preferred_y,保證每個 cell 都會出現候選球,掃描
+     * 找出兩者候選球實際重疊的座標,驗證 priority 較高者贏,且重複呼叫結果一致。
+     */
+    @Test
+    fun `higher priority ore wins an overlap and the winner is reproducible`() {
+        fun singleOreRegistry(oreType: String, material: String, priority: Int): OreRegistry {
+            val config = YamlConfiguration()
+            config.set("ores.$oreType.enabled", true)
+            config.set("ores.$oreType.materials.stone", material)
+            config.set("ores.$oreType.y_min", -64)
+            config.set("ores.$oreType.y_max", 64)
+            config.set("ores.$oreType.preferred_y", 0)
+            config.set("ores.$oreType.density", 1.0)
+            config.set("ores.$oreType.vein_size_min", 10)
+            config.set("ores.$oreType.vein_size_max", 10)
+            config.set("ores.$oreType.cell_chance", 1.0)
+            config.set("ores.$oreType.priority", priority)
+            return OreRegistry.load(config.getConfigurationSection("ores")).getOrThrow()
+        }
+
+        val commonOnly = OreVeinResolver("salt", singleOreRegistry("common", "IRON_ORE", priority = 10))
+        val rareOnly = OreVeinResolver("salt", singleOreRegistry("rare", "DIAMOND_ORE", priority = 90))
+
+        val combinedConfig = YamlConfiguration()
+        combinedConfig.set("ores.common.enabled", true)
+        combinedConfig.set("ores.common.materials.stone", "IRON_ORE")
+        combinedConfig.set("ores.common.y_min", -64)
+        combinedConfig.set("ores.common.y_max", 64)
+        combinedConfig.set("ores.common.preferred_y", 0)
+        combinedConfig.set("ores.common.density", 1.0)
+        combinedConfig.set("ores.common.vein_size_min", 10)
+        combinedConfig.set("ores.common.vein_size_max", 10)
+        combinedConfig.set("ores.common.cell_chance", 1.0)
+        combinedConfig.set("ores.common.priority", 10)
+        combinedConfig.set("ores.rare.enabled", true)
+        combinedConfig.set("ores.rare.materials.stone", "DIAMOND_ORE")
+        combinedConfig.set("ores.rare.y_min", -64)
+        combinedConfig.set("ores.rare.y_max", 64)
+        combinedConfig.set("ores.rare.preferred_y", 0)
+        combinedConfig.set("ores.rare.density", 1.0)
+        combinedConfig.set("ores.rare.vein_size_min", 10)
+        combinedConfig.set("ores.rare.vein_size_max", 10)
+        combinedConfig.set("ores.rare.cell_chance", 1.0)
+        combinedConfig.set("ores.rare.priority", 90)
+        val combined = OreVeinResolver("salt", OreRegistry.load(combinedConfig.getConfigurationSection("ores")).getOrThrow())
+
+        var overlap: Triple<Int, Int, Int>? = null
+        outer@ for (x in 0 until 96) {
+            for (y in -32 until 32) {
+                for (z in 0 until 96) {
+                    if (commonOnly.resolve("world", 0, x, y, z, "STONE") != null &&
+                        rareOnly.resolve("world", 0, x, y, z, "STONE") != null
+                    ) {
+                        overlap = Triple(x, y, z)
+                        break@outer
+                    }
+                }
+            }
+        }
+        val (x, y, z) = overlap ?: error("測試設定下掃描範圍內找不到兩種礦候選球重疊的座標")
+
+        val first = combined.resolve("world", 0, x, y, z, "STONE")
+        val second = combined.resolve("world", 0, x, y, z, "STONE")
+        assertNotNull(first)
+        assertEquals("rare", first.oreType, "priority 較高(90 > 10)的礦種應該贏")
+        assertEquals(90, first.priority)
+        assertEquals(first, second, "重複呼叫必須得到一模一樣的贏家,不能忽勝忽敗")
+    }
+
+    /**
+     * OreVeinResolver.resolveDetailed 附帶的 [VeinBall] 讓呼叫端(MaterializationService)可以
+     * 判斷「另一個座標是否屬於同一顆礦脈」——這裡驗證:落在同一顆候選球內的不同座標,各自
+     * 獨立呼叫 resolveDetailed,得到的都是同一個 veinId(同一顆礦脈),且多次呼叫結果一致。
+     */
+    @Test
+    fun `distinct coordinates within the same candidate ball resolve to the same vein consistently`() {
+        val resolver = OreVeinResolver("salt", registry())
+        val (x, y, z) = findHitCoordinate(resolver)
+        val trigger = resolver.resolveDetailed("world", 0, x, y, z, "STONE") ?: error("預期命中卻沒有結果")
+
+        val neighborOffsets = listOf(Triple(1, 0, 0), Triple(0, 1, 0), Triple(0, 0, 1), Triple(-1, -1, -1))
+        neighborOffsets.forEach { (dx, dy, dz) ->
+            val nx = x + dx
+            val ny = y + dy
+            val nz = z + dz
+            if (!trigger.ball.contains(nx, ny, nz)) return@forEach // 邊界附近不是每個偏移都保證落在球內
+            val first = resolver.resolveDetailed("world", 0, nx, ny, nz, "STONE")
+            val second = resolver.resolveDetailed("world", 0, nx, ny, nz, "STONE")
+            assertNotNull(first, "($nx,$ny,$nz) 落在候選球內,理論上必定命中")
+            assertEquals(trigger.result.veinId, first.result.veinId, "同一顆候選球內的座標必須是同一個 veinId")
+            assertEquals(first, second, "同座標重複決算必須完全一致")
+        }
+    }
+
     @Test
     fun `deepslate does not fall back to stone material`() {
         val config = YamlConfiguration()

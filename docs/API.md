@@ -115,13 +115,23 @@ f(salt, world, epoch, oreType, cellX, cellY, cellZ) -> hit / miss
 ```
 
 - **Pure function**: splitmix64 hashing; reads no world state, no DB.
-- **16³ cells**; candidates come from the 3×3×3 neighborhood of cells, and when multiple veins cover a block the smallest `veinId` wins.
+- **16³ cells**; candidates come from the 3×3×3 neighborhood of cells. When *different ore types'* spheres both cover a block, the higher `priority` (config field, §CONFIG.md) wins — this replaced an earlier hash-based (`veinId`) tie-break that had no operational meaning. `veinId` is still the tie-break when it's the *same* ore type's spheres overlapping (material is identical either way, so it doesn't matter which one "wins").
 - **Idempotent**: same inputs, same output, forever. That's why `/kyo resolve` is safe to re-run — if you suspect a coordinate missed its event, re-run it and the result is guaranteed identical to "what should have happened".
 - **`salt` decouples real ore from the world seed**: seed-map sites can compute where vanilla ore generated, but not where Kyokalith's ore is.
 
 **`epoch`**: a per-chunk counter. When a chunk is regenerated (NatureRevive), `epoch += 1` — re-rolling `f` **for that chunk only**, leaving the rest of the world alone.
 
 **Cell cache**: LRU, 200k entries, key includes `epoch`, so entries for regenerated chunks age out naturally — no invalidation sweeps. Cache misses cost nothing correctness-wise (pure function, just recompute).
+
+### Locking a vein's shape at first exposure (`materialized_positions`)
+
+`f` alone is already deterministic for a fixed salt/epoch/config — but if `cell_chance`, `vein_size`, `priority`, or the geometry code itself is ever tuned later (exactly what this changelog entry did to `ancient_debris`), a vein that a player is *mid-way through excavating* could otherwise have its still-buried other half resolve differently than the half already dug out, if the tuning landed between two of the player's own digging sessions. To close that gap: the first time any position in a vein is resolved, Kyokalith also resolves (but does **not** place) every other position within a **5×5×5 window centered on that trigger block** that geometrically belongs to the same winning candidate sphere, and locks all of those decisions into `materialized_positions` in one batch. The next time any of those positions is genuinely first-exposed (potentially versions/tunings later), it reads the locked decision instead of calling `f` again.
+
+This is deliberately bounded and deliberately inert:
+
+- **Constant work per event**: at most 124 extra positions (5×5×5 minus the trigger itself), never a vein/chunk scan. A vein bigger than that window just gets locked incrementally, one 5×5×5 slice at a time, as the player naturally tunnels through it.
+- **Never writes a block for an unexposed position.** The lock is a row in SQLite (or the in-memory cache) that says "when this coordinate is *later* first-exposed, apply this material" — it is not `Block.setType`. A locked-but-unexposed position is, in every way a client or an x-ray user can observe, identical to any other still-buried decoy: same material in the world data, same bytes in the chunk packet. Only the trigger position — the one actually undergoing first-exposure resolution *this* tick — ever gets `setType` called on it.
+- **Misses aren't recorded for the trigger position itself.** If `f` finds no vein at all, nothing is written to `materialized_positions` — the physical block state (already permanently set, since `isNewlyExposed` guarantees this exact coordinate is never re-resolved) is protection enough, and recording every miss would mean a synchronous SQLite write on nearly every block broken, which breaks the "no DB I/O on the hot path" contract below. Misses picked up as *part of* a hit's 5×5×5 window **are** recorded, since that write is already happening anyway.
 
 ---
 
@@ -143,6 +153,12 @@ eligible_placed_ores(world, x, y, z, epoch, ore_type, ore_material,
                      token_id, placed_by, placed_at, PRIMARY KEY(world, x, y, z))
 
 suspended_chunks(world, cx, cz, reason, created_at, PRIMARY KEY(world, cx, cz))
+
+materialized_positions(world, cx, cz, epoch, lx, y, lz, ore_type, vein_id, material,
+                       PRIMARY KEY(world, cx, cz, epoch, lx, y, lz))
+  -- see "Locking a vein's shape at first exposure" above. ore_type/vein_id are null on a
+  -- locked miss; material is always set (the block to apply once this position is exposed).
+  -- Cleared per-chunk on NatureRevive regeneration, same as dirty_positions.
 ```
 
 `schema_version` is written but never read — there is no migration code yet.

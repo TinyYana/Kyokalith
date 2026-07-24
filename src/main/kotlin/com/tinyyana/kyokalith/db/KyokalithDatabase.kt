@@ -77,6 +77,28 @@ class KyokalithDatabase(private val file: File) {
                     )
                     """.trimIndent(),
                 )
+                // 2026-07-24 新增(純加法,對舊資料庫安全):首次命中礦脈時鎖定的持久化決算結果,
+                // 見 MaterializedVeinStore / MaterializationService。只有真正命中礦脈(含其
+                // 5x5x5 局部鄰域內同一顆候選球的成員)才寫入這張表;純 miss 不寫,見
+                // MaterializationService 的取捨說明——世界方塊狀態本身已是永久記錄,miss 補寫
+                // 一筆不會多一層保障,卻會讓每次挖空石都變成一次 SQLite 寫入。
+                st.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS materialized_positions (
+                        world TEXT NOT NULL,
+                        cx INTEGER NOT NULL,
+                        cz INTEGER NOT NULL,
+                        epoch INTEGER NOT NULL,
+                        lx INTEGER NOT NULL,
+                        y INTEGER NOT NULL,
+                        lz INTEGER NOT NULL,
+                        ore_type TEXT,
+                        vein_id TEXT,
+                        material TEXT NOT NULL,
+                        PRIMARY KEY(world, cx, cz, epoch, lx, y, lz)
+                    )
+                    """.trimIndent(),
+                )
             }
         }
         ensureSalt()

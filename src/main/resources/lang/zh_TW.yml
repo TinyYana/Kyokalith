@@ -33,6 +33,7 @@ inspect-dirty: "&7dirty:&f{dirty}"
 inspect-suspended: "&7suspended:&f{suspended}"
 inspect-placed: "&7placed eligible:&f{ore}"
 inspect-vein: "&7vein result:&f{result}"
+inspect-locked: "&7已鎖定(materialized_positions):&f{state}"
 
 preview-hits: "&b[Kyokalith] preview 半徑 {radius} 命中 {total} 格"
 preview-example: "&7- &f{x} {y} {z} &7{ore}->{material}"

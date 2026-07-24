@@ -43,6 +43,7 @@ class NatureReviveBridge(private val plugin: KyokalithPlugin) {
         try {
             val nextEpoch = plugin.chunkEpochStore.increment(coord)
             plugin.dirtyPositionStore.clearEpoch(EpochedChunk(coord.world, coord.cx, coord.cz, oldEpoch))
+            plugin.materializedVeinStore.clearEpoch(EpochedChunk(coord.world, coord.cx, coord.cz, oldEpoch))
             plugin.eligiblePlacedOreStore.removeInChunk(coord.world, coord.cx, coord.cz)
             plugin.logger.fine("NatureRevive regenerated ${coord.world} ${coord.cx},${coord.cz}; epoch $oldEpoch->$nextEpoch")
             completed = true

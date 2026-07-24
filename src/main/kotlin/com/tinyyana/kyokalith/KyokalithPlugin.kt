@@ -15,6 +15,7 @@ import com.tinyyana.kyokalith.mining.OreLifecycleListener
 import com.tinyyana.kyokalith.ore.OreRegistry
 import com.tinyyana.kyokalith.pdc.EligibleOrePdc
 import com.tinyyana.kyokalith.schedule.Schedulers
+import com.tinyyana.kyokalith.vein.MaterializedVeinStore
 import com.tinyyana.kyokalith.vein.OreVeinResolver
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
@@ -36,6 +37,8 @@ class KyokalithPlugin : JavaPlugin() {
     lateinit var eligibleOrePdc: EligibleOrePdc
         private set
     lateinit var oreVeinResolver: OreVeinResolver
+        private set
+    lateinit var materializedVeinStore: MaterializedVeinStore
         private set
     lateinit var materializationService: MaterializationService
         private set
@@ -75,6 +78,7 @@ class KyokalithPlugin : JavaPlugin() {
         eligiblePlacedOreStore = EligiblePlacedOreStore(database)
         eligibleOrePdc = EligibleOrePdc(this)
         oreVeinResolver = OreVeinResolver(database.getMeta("salt") ?: error("database salt missing"), oreRegistry)
+        materializedVeinStore = MaterializedVeinStore(database)
         materializationService = MaterializationService(this)
         oreEligibilityService = OreEligibilityService(this)
 

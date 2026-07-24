@@ -99,6 +99,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             // 已是礦物的座標要用基底材質問 f,否則永遠 none,無法確認天然 eligible 的 f-match
             val baseName = MaterializationService.nativeOreBase(block.type)?.name ?: block.type.name
             val result = plugin.oreVeinResolver.resolve(world.name, epoch, x, y, z, baseName, world.environment.name)
+            val locked = plugin.materializedVeinStore.find(epoched, local)
 
             sender.sendMessage(
                 listOf(
@@ -108,7 +109,14 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
                     m("inspect-dirty", "dirty" to plugin.dirtyPositionStore.isDirty(epoched, local)),
                     m("inspect-suspended", "suspended" to plugin.suspendedChunkStore.isSuspended(coord)),
                     m("inspect-placed", "ore" to (placed?.oreType ?: m("none"))),
-                    m("inspect-vein", "result" to (result?.let { "${it.oreType} -> ${it.material} (${it.veinId})" } ?: m("none"))),
+                    m(
+                        "inspect-vein",
+                        "result" to (result?.let { "${it.oreType} -> ${it.material} (priority ${it.priority}, vein ${it.veinId})" } ?: m("none")),
+                    ),
+                    m(
+                        "inspect-locked",
+                        "state" to (locked?.let { "${it.oreType ?: m("none")} -> ${it.material}" } ?: m("none")),
+                    ),
                 ).joinToString("\n"),
             )
         }

@@ -15,6 +15,12 @@ data class OreDefinition(
     val veinSizeMin: Int,
     val veinSizeMax: Int,
     val cellChance: Double,
+    /**
+     * 跨礦種重疊時的優先序:同一座標若被多顆不同礦種的候選球同時命中,priority 數字較大的
+     * 那個贏(取代舊行為的 veinId 字典序雜湊排序,那組排序沒有維運可解釋性)。同礦種、不同
+     * cell 的候選球互相重疊時不受此影響(仍是同一種礦物,材質相同,無關緊要)。
+     */
+    val priority: Int,
 ) {
     init {
         require(stoneMaterial != null || deepslateMaterial != null) {

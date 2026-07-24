@@ -9,7 +9,22 @@ data class OreResult(
     val oreType: String,
     val material: String,
     val veinId: String,
+    /** 決算贏得這個座標的礦種 priority(見 OreDefinition.priority),供 /kyo inspect 顯示仲裁依據。 */
+    val priority: Int,
 )
+
+/** 候選球的幾何範圍,供呼叫端(MaterializationService)判斷「另一個座標是否屬於同一顆礦脈」。 */
+data class VeinBall(val ox: Int, val oy: Int, val oz: Int, val radius: Int) {
+    fun contains(x: Int, y: Int, z: Int): Boolean {
+        val dx = x - ox
+        val dy = y - oy
+        val dz = z - oz
+        return dx * dx + dy * dy + dz * dz <= radius * radius
+    }
+}
+
+/** [resolve] 的完整版本,額外附上贏得該座標的候選球幾何(見 [VeinBall])。 */
+data class ResolvedVein(val result: OreResult, val ball: VeinBall)
 
 /**
  * 決定性礦脈函數,只做純計算;不讀寫世界、不碰資料庫。
@@ -29,6 +44,7 @@ class OreVeinResolver(
         },
     )
 
+    /** 只回傳最終贏得該座標的礦物結果;跨礦種仲裁見 [resolveDetailed]。 */
     fun resolve(
         world: String,
         epoch: Int,
@@ -37,30 +53,56 @@ class OreVeinResolver(
         z: Int,
         baseMaterial: String,
         dimension: String = "NORMAL",
-    ): OreResult? {
-        val candidates = registry.enabled().mapNotNull { ore ->
+    ): OreResult? = resolveDetailed(world, epoch, x, y, z, baseMaterial, dimension)?.result
+
+    /**
+     * 決算並附上贏得該座標的候選球幾何(見 [VeinBall])——鎖定 5×5×5 局部鄰域時(見
+     * MaterializationService),用同一顆候選球對鄰居座標做 contains 判斷,不需要重新從
+     * cell 幾何反推「這是不是同一顆礦脈」。
+     *
+     * 跨礦種重疊時,依 [OreDefinition.priority] 由大到小排序決定贏家;priority 相同才退回
+     * veinId 字典序(僅用於讓結果穩定可重現,無維運意義)。
+     */
+    fun resolveDetailed(
+        world: String,
+        epoch: Int,
+        x: Int,
+        y: Int,
+        z: Int,
+        baseMaterial: String,
+        dimension: String = "NORMAL",
+    ): ResolvedVein? {
+        val hits = registry.enabled().mapNotNull { ore ->
             if (ore.dimension != dimension) return@mapNotNull null
             val material = materialForBase(ore, baseMaterial) ?: return@mapNotNull null
             if (y !in ore.yMin..ore.yMax) return@mapNotNull null
             hitForOre(world, epoch, x, y, z, ore)?.let { hit ->
-                hit.copy(material = material)
+                hit.copy(result = hit.result.copy(material = material))
             }
         }
-        return candidates.minByOrNull { it.veinId }
+        return hits
+            .sortedWith(compareByDescending<OreHit> { it.result.priority }.thenBy { it.result.veinId })
+            .firstOrNull()
+            ?.let { ResolvedVein(it.result, it.ball) }
     }
 
-    private fun hitForOre(world: String, epoch: Int, x: Int, y: Int, z: Int, ore: OreDefinition): OreResult? {
+    private data class OreHit(val result: OreResult, val ball: VeinBall)
+
+    private fun hitForOre(world: String, epoch: Int, x: Int, y: Int, z: Int, ore: OreDefinition): OreHit? {
         val cellX = floorCell(x)
         val cellY = floorCell(y)
         val cellZ = floorCell(z)
-        var best: OreResult? = null
+        var best: OreHit? = null
         for (dx in -1..1) {
             for (dy in -1..1) {
                 for (dz in -1..1) {
                     val candidate = candidateFromCell(world, epoch, cellX + dx, cellY + dy, cellZ + dz, ore)
                     if (candidate.contains(x, y, z)) {
-                        val result = OreResult(ore.oreType, "", candidate.id)
-                        if (best == null || result.veinId < best.veinId) best = result
+                        val hit = OreHit(
+                            OreResult(ore.oreType, "", candidate.id, ore.priority),
+                            VeinBall(candidate.ox, candidate.oy, candidate.oz, candidate.radius),
+                        )
+                        if (best == null || hit.result.veinId < best.result.veinId) best = hit
                     }
                 }
             }
@@ -153,8 +195,20 @@ class OreVeinResolver(
         private const val CELL_SIZE = 16
         private const val CELL_CACHE_MAX_ENTRIES = 200_000
 
-        /** 半徑上限對應球體約 33 格(dx²+dy²+dz²<=4 的整數點數),與原版鐵/鑽石礦脈 8-10 格量級同一數量級。 */
-        private const val MAX_VEIN_RADIUS = 2
+        /**
+         * 半徑上限。2026-07-24 從 2 提高到 4:半徑 2(球體 33 格)讓 `vein_size_max` 一旦設到
+         * 6 以上(bundled config 的 coal/iron/copper/gold/redstone/lapis/diamond/nether_quartz/
+         * nether_gold 全部是 7~10)全部被砍到同一顆 33 格小球,不管玩家設 7 還是 10 感受不出差異,
+         * 也是「挖到一顆礦後續全變石頭」體感的主因之一——礦脈物理範圍太小,一下就挖穿。
+         *
+         * 半徑 4 球體約 257 格(dx²+dy²+dz²<=16 的整數點數),仍遠低於半徑 5(約 515 格,§19
+         * 記錄過的「一顆礦脈吃掉整片區域」舊 bug 量級),同時讓 vein_size 1~10 的整數除法
+         * (`size/2`)在 1~4 之間有實際區隔(1~3→1,4~5→2,6~7→3,8~10→4),不再是 4 以上
+         * 全部收斂成同一個數字。想要更大的礦場範圍,調高的是 `cell_chance`/`density`(讓礦脈
+         * 更常出現),不是這個半徑上限——理由與 docs/CONFIG.md 既有的紅線一致,只是把「多小
+         * 算小」的門檻放寬,不是移除門檻。
+         */
+        private const val MAX_VEIN_RADIUS = 4
 
         private fun floorCell(value: Int): Int = Math.floorDiv(value, CELL_SIZE)
 

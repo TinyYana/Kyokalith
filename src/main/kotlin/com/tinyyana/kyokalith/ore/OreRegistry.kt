@@ -44,6 +44,7 @@ class OreRegistry private constructor(
                     veinSizeMin = ore.getInt("vein_size_min", 1),
                     veinSizeMax = ore.getInt("vein_size_max", 1),
                     cellChance = ore.getDouble("cell_chance"),
+                    priority = ore.getInt("priority", 0),
                 )
             }
             require(defs.isNotEmpty()) { "config.yml 的 ores 節點不能是空的" }

@@ -66,8 +66,9 @@ ores:
 | `y_min` / `y_max` | Int | `0` | Hard range; outside it, never resolves |
 | `preferred_y` | Int | `0` | Peak of the triangular weight: 1.0 at `preferred_y`, falling linearly toward `y_min`/`y_max` |
 | `density` | Double | `1.0` | Multiplier applied to `cell_chance` |
-| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | Vein "size". Actual sphere radius = `max(1, size / 2)`, **hard-clamped at 2** |
+| `vein_size_min` / `vein_size_max` | Int | `1` / `1` | Vein "size". Actual sphere radius = `max(1, size / 2)`, **hard-clamped at 4** |
 | `cell_chance` | Double 0.0–1.0 | required | Probability that a 16×16×16 cell spawns a vein origin (before `density` and the Y weight) |
+| `priority` | Int | `0` | Tie-break when a different ore type's sphere also covers this coordinate. **Higher wins.** Bundled defaults follow rarity (common ore low, rare ore high) so overlap always favors the rarer ore. Same-ore-type overlaps aren't affected (material is identical either way). Shown in `/kyo inspect` |
 
 ### Effective hit probability
 
@@ -79,9 +80,9 @@ activation = clamp(cell_chance × density × yWeight(y), 0, 1)
 
 ### 🔴 Red lines
 
-**`vein_size_max` beyond ~5 does nothing.** The code has `MAX_VEIN_RADIUS = 2`, hard-clamping the sphere at roughly 33 blocks.
+**`vein_size_max` beyond ~9 collapses onto the same radius.** The code has `MAX_VEIN_RADIUS = 4`, hard-clamping the sphere at roughly 257 blocks (integer division `size / 2` means 8, 9 and 10 all land on radius 4).
 
-That clamp is the fix for an "one ore type extends forever" bug: with `radius = vein_size_max / 2 = 5` the sphere is ~500 blocks — mining one vein meant mining a whole field. **Do not remove it to "make veins bigger."** Want more ore? Raise `cell_chance` / `density`, not vein size.
+That clamp exists because of an "one ore type extends forever" bug history: at `radius = vein_size_max / 2 = 5` the sphere is ~515 blocks — mining one vein meant mining a whole field. Raising the clamp from its earlier value of 2 (all of `vein_size_max` 4-10 collapsing onto the *same* ~33-block sphere, regardless of the config value — the direct cause of "one ore vein empties out and abruptly turns to plain stone") to 4 (~257 blocks) lets `vein_size` differentiate meaningfully across the 1-10 range without reopening the old bug. **Do not remove the clamp entirely to "make veins bigger."** Want more ore overall? Raise `cell_chance` / `density`, not vein size.
 
 **Unset `dimension` = overworld only.** (An older config comment claimed "unset = matches all dimensions"; that was wrong — the code defaults to `NORMAL` and matches exactly.)
 
@@ -113,7 +114,7 @@ ores:
     preferred_y: 32                 # distribution peak
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 3                # remember: actual radius caps at 2
+    vein_size_max: 3                # remember: actual radius caps at 4
     cell_chance: 0.02
 ```
 

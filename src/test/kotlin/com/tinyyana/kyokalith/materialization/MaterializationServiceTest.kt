@@ -76,4 +76,19 @@ class MaterializationServiceTest {
         val neighbors = List(6) { solidNeighbor }
         assertFalse(MaterializationService.isNewlyExposed(neighbors))
     }
+
+    /**
+     * 5×5×5 局部鄰域預決算的硬上限:不管礦脈候選球之後被調得多大(OreVeinResolver 的
+     * MAX_VEIN_RADIUS 是獨立的上限),單一首次曝露事件一次鎖定的鄰域工作量永遠是這 124 個
+     * 額外座標,不會變成掃整顆礦脈或整個 chunk。
+     */
+    @Test
+    fun `neighborhood offsets are a fixed 124-entry window regardless of vein size`() {
+        val offsets = MaterializationService.neighborhoodOffsets()
+
+        assertEquals(124, offsets.size, "5x5x5 扣掉原點應該正好是 124 個座標")
+        assertTrue(offsets.none { (dx, dy, dz) -> dx == 0 && dy == 0 && dz == 0 }, "觸發座標本身不該出現在鄰域清單裡")
+        assertTrue(offsets.all { (dx, dy, dz) -> dx in -2..2 && dy in -2..2 && dz in -2..2 }, "每個偏移量都必須落在半徑 2 以內")
+        assertEquals(offsets.size, offsets.toSet().size, "偏移量不應該重複")
+    }
 }

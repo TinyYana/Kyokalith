@@ -18,6 +18,14 @@ database:
 # and the match is exact — nether ore types must explicitly say NETHER.
 # Ore types with enabled: false are fully ignored: decoys stay vanilla, mining is vanilla,
 # and no OreCheckTriggerEvent fires.
+#
+# priority (Int, default 0): tie-break when two different ore types both resolve a hit at the
+# same coordinate (overlapping candidate spheres). Higher priority wins. This replaces an old
+# hash-based (veinId) tie-break that had no operational meaning — with priority, "diamond beat
+# coal here" is explainable and shows up in `/kyo inspect`. Same-ore-type overlaps (two cells of
+# the *same* ore covering one block) are unaffected by this — the material is identical either
+# way. Bundled defaults follow vanilla rarity tiers: common ores are low, rare ores are high, so
+# a rare ore always wins when its sphere overlaps a common one's.
 ores:
   coal:
     enabled: true
@@ -31,6 +39,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 10
     cell_chance: 0.045
+    priority: 10
   iron:
     enabled: true
     materials:
@@ -43,6 +52,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 9
     cell_chance: 0.038
+    priority: 20
   copper:
     enabled: true
     materials:
@@ -55,6 +65,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 10
     cell_chance: 0.030
+    priority: 15
   gold:
     enabled: true
     materials:
@@ -67,6 +78,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 9
     cell_chance: 0.018
+    priority: 40
   redstone:
     enabled: true
     materials:
@@ -79,6 +91,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 8
     cell_chance: 0.027
+    priority: 30
   lapis:
     enabled: true
     materials:
@@ -91,6 +104,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 7
     cell_chance: 0.021
+    priority: 35
   diamond:
     enabled: true
     materials:
@@ -103,6 +117,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 8
     cell_chance: 0.027
+    priority: 70
   emerald:
     enabled: true
     materials:
@@ -115,6 +130,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 3
     cell_chance: 0.009
+    priority: 80
   nether_quartz:
     enabled: true
     dimension: NETHER
@@ -127,6 +143,7 @@ ores:
     vein_size_min: 1
     vein_size_max: 10
     cell_chance: 0.045
+    priority: 10
   nether_gold:
     enabled: true
     dimension: NETHER
@@ -139,6 +156,20 @@ ores:
     vein_size_min: 1
     vein_size_max: 10
     cell_chance: 0.030
+    priority: 40
+  # 2026-07-24 recalibrated (see docs/KYOKALITH_SPEC.md handoff notes / commit message for the
+  # full Monte Carlo derivation): cell_chance was 0.006 (the lowest of any ore) and vein_size_max
+  # was 2, which together measured out to ~0.02-0.24 hits per 10,000 sampled blocks across the
+  # whole y8-119 range — i.e. functionally absent, not just rare. That's the real root cause of
+  # "ancient debris is basically unfindable in the y8-22 layer" reports; y_min/y_max/preferred_y
+  # already matched vanilla's shape and were left untouched. cell_chance 0.006->0.05 (~8x) and
+  # vein_size_max 2->3 (matching vanilla's real per-vein block count of 3 for both of its
+  # overlapping distributions) measured ~0.6-1.0 hits/10k in the y8-22 band — clearly rarer than
+  # nether_quartz/nether_gold's own measured peak density (~3.4/10k and ~1.4/10k at y60) but no
+  # longer indistinguishable from zero. Remember this is *only* the blind-dig-into-buried-decoy
+  # contribution: most of what a player actually finds at y15 is real, already-exposed vanilla
+  # ancient debris on cave/ravine walls (WORLDGEN_EXPOSED, untouched by this plugin) — this value
+  # only had to stop being ~zero, not carry the entire "findable in 10-20 minutes" experience alone.
   ancient_debris:
     enabled: true
     dimension: NETHER
@@ -149,5 +180,6 @@ ores:
     preferred_y: 15
     density: 1.0
     vein_size_min: 1
-    vein_size_max: 2
-    cell_chance: 0.006
+    vein_size_max: 3
+    cell_chance: 0.05
+    priority: 90
