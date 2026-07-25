@@ -4,7 +4,6 @@ import org.bukkit.NamespacedKey
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 import org.bukkit.plugin.java.JavaPlugin
-import java.util.UUID
 
 /**
  * Silk Touch 挖出的 eligible 礦物 ItemStack 標記(token 生命週期見 docs/API.md)。
@@ -17,6 +16,11 @@ class EligibleOrePdc(plugin: JavaPlugin) {
     private val originEpochKey = NamespacedKey(plugin, "origin_epoch")
     private val tokenIdKey = NamespacedKey(plugin, "token_id")
 
+    /**
+     * 不寫入 per-item tokenId(舊行為每次呼叫塞一組新 UUID,導致 meta 永遠不同、
+     * 同來源的礦物 ItemStack 永遠無法在背包堆疊)。§11.4 設計是「資格跟著 ItemStack 移動」,
+     * 同 oreType/originWorld/originEpoch 的礦物本就該堆疊成一疊。
+     */
     fun tag(item: ItemStack, oreType: String, originWorld: String, originEpoch: Int): ItemStack {
         val meta = item.itemMeta ?: return item
         val container = meta.persistentDataContainer
@@ -24,7 +28,6 @@ class EligibleOrePdc(plugin: JavaPlugin) {
         container.set(oreTypeKey, PersistentDataType.STRING, oreType)
         container.set(originWorldKey, PersistentDataType.STRING, originWorld)
         container.set(originEpochKey, PersistentDataType.INTEGER, originEpoch)
-        container.set(tokenIdKey, PersistentDataType.STRING, UUID.randomUUID().toString())
         item.itemMeta = meta
         return item
     }
@@ -41,11 +44,13 @@ class EligibleOrePdc(plugin: JavaPlugin) {
         val oreType = container.get(oreTypeKey, PersistentDataType.STRING) ?: return null
         val originWorld = container.get(originWorldKey, PersistentDataType.STRING) ?: return null
         val originEpoch = container.get(originEpochKey, PersistentDataType.INTEGER) ?: return null
-        val tokenId = container.get(tokenIdKey, PersistentDataType.STRING) ?: return null
-        return EligibleOreToken(oreType, originWorld, originEpoch, tokenId)
+        return EligibleOreToken(oreType, originWorld, originEpoch)
     }
 
-    /** 放置 qualified 礦物後,資格轉移到 eligible_placed_ores,ItemStack 上的標記要清除(§11.4)。 */
+    /**
+     * 放置 qualified 礦物後,資格轉移到 eligible_placed_ores,ItemStack 上的標記要清除(§11.4)。
+     * 仍移除 tokenIdKey:清掉修正前就已標記、背包裡還留著舊 token_id 欄位的礦物。
+     */
     fun clear(item: ItemStack): ItemStack {
         val meta = item.itemMeta ?: return item
         val container = meta.persistentDataContainer

@@ -2,6 +2,12 @@
 
 All notable changes to Kyokalith are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/). The release CI extracts the matching `## [x.y.z]` section as the GitHub Release notes — a tag without a section here fails the release on purpose.
 
+## [1.3.5] - 2026-07-25
+
+### Fixed
+
+- **Silk Touch'd eligible ore no longer refuses to stack.** `EligibleOrePdc.tag()` stamped a fresh random UUID into the ItemStack's PDC on every call, so any two otherwise-identical eligible ore items always had different meta and could never merge — each Silk Touch break sat in the inventory as its own 1-count stack. The per-item `token_id` is gone from the ItemStack; eligible ore now stacks normally whenever `oreType`/`origin_world`/`origin_epoch` match, matching the spec's "eligibility follows the ItemStack" model. `token_id` still exists as a debug-only column on the `eligible_placed_ores` DB row, generated fresh at placement time instead of carried from the item.
+
 ## [1.3.4] - 2026-07-25
 
 ### Fixed

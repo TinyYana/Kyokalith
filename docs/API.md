@@ -102,7 +102,7 @@ first-exposure resolution → block carries a token
 
 So a token-carrying ore can be traded, moved, stockpiled, and re-mined, but **the check happens once**.
 
-**PDC on the ItemStack** (namespace `kyokalith`): `eligible` (BYTE) / `ore_type` (STRING) / `origin_world` (STRING) / `origin_epoch` (INTEGER) / `token_id` (STRING, UUID).
+**PDC on the ItemStack** (namespace `kyokalith`): `eligible` (BYTE) / `ore_type` (STRING) / `origin_world` (STRING) / `origin_epoch` (INTEGER). No per-item `token_id` on the ItemStack — an earlier version stamped a fresh random UUID on every tag, which made the meta differ between any two otherwise-identical ore items and silently broke vanilla stacking (each Silk Touch'd ore sat as its own 1-count stack). Same-origin ore now stacks normally; `token_id` still exists as a debug column on the `eligible_placed_ores` DB row, generated fresh at placement time.
 
 **No free re-rolls**: on `BlockBreakEvent` a `PendingBreak` is stashed and a next-tick reclaimer scheduled. If `BlockDropItemEvent` never arrives (e.g. another plugin suppressed the drops), the token is **consumed anyway**, with a `fine`-level log line.
 

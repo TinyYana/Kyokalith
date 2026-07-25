@@ -17,6 +17,7 @@ import org.bukkit.event.block.BlockExplodeEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.entity.EntityExplodeEvent
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 class OreLifecycleListener(
@@ -41,7 +42,7 @@ class OreLifecycleListener(
                 epoch = epoch,
                 oreType = token.oreType,
                 oreMaterial = block.type.name,
-                tokenId = token.tokenId,
+                tokenId = UUID.randomUUID().toString(),
                 placedBy = event.player.uniqueId,
                 placedAtMillis = Instant.now().toEpochMilli(),
             ),

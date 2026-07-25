@@ -102,7 +102,7 @@ class OreCheckListener : Listener {
 
 所以帶令牌的礦可以交易、搬運、囤起來、再挖,但**檢定只會發生一次**。
 
-**ItemStack 上的 PDC**(namespace `kyokalith`):`eligible` (BYTE) / `ore_type` (STRING) / `origin_world` (STRING) / `origin_epoch` (INTEGER) / `token_id` (STRING, UUID)。
+**ItemStack 上的 PDC**(namespace `kyokalith`):`eligible` (BYTE) / `ore_type` (STRING) / `origin_world` (STRING) / `origin_epoch` (INTEGER)。ItemStack 上**不含** per-item `token_id`——舊版每次標記都塞一組新亂數 UUID,導致任兩個本應相同的礦物 meta 永遠不同,背包裡靜默無法堆疊(每個 Silk Touch 挖出的礦物都各自佔一疊、疊上限 1)。現在同來源礦物可正常堆疊;`token_id` 仍保留在 `eligible_placed_ores` 資料表當 debug 欄位,放置當下才重新產生。
 
 **沒有免費重骰**:`BlockBreakEvent` 時會先暫存一筆 `PendingBreak` 並排一個下一 tick 的回收器。如果 `BlockDropItemEvent` 從來沒到(例如被別的插件把掉落擋掉了),令牌**照樣消耗**,並寫一行 `fine` 級的 log。
 
