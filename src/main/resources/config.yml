@@ -11,6 +11,11 @@
 locale: zh_TW
 config_schema_version: 2
 
+# When true, every real (non-decoy) ore find broadcasts to online players holding
+# kyokalith.admin. Off by default — this is a convenience alert, not required for the
+# anti-xray model itself. Toggle at runtime with /kyo notify <on|off> (persists here).
+notify_admins_on_ore_find: false
+
 database:
   file: kyokalith.db
   dirty_flush_interval_ticks: 40

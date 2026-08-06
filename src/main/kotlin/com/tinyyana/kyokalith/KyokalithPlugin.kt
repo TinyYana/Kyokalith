@@ -12,6 +12,7 @@ import com.tinyyana.kyokalith.materialization.MaterializationListener
 import com.tinyyana.kyokalith.materialization.MaterializationService
 import com.tinyyana.kyokalith.mining.OreEligibilityService
 import com.tinyyana.kyokalith.mining.OreLifecycleListener
+import com.tinyyana.kyokalith.notify.OreFindNotifyListener
 import com.tinyyana.kyokalith.ore.OreRegistry
 import com.tinyyana.kyokalith.pdc.EligibleOrePdc
 import com.tinyyana.kyokalith.schedule.Schedulers
@@ -95,6 +96,7 @@ class KyokalithPlugin : JavaPlugin() {
         }
         server.pluginManager.registerEvents(MaterializationListener(this, materializationService), this)
         server.pluginManager.registerEvents(OreLifecycleListener(this, oreEligibilityService), this)
+        server.pluginManager.registerEvents(OreFindNotifyListener(this), this)
         natureReviveBridgeActive = NatureReviveBridge(this).register()
         logger.info(
             "Kyokalith ${description.version} enabled (decoy model: event-driven exposure resolution, silk/placed token lifecycle, OreCheckTriggerEvent available, no chunk scanning, NatureRevive bridge: ${if (natureReviveBridgeActive) "active" else "inactive"}, scheduler: ${if (Schedulers.isFolia) "Folia regionized" else "Bukkit main thread"})",

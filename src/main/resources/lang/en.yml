@@ -5,7 +5,7 @@
 # then set `locale: <locale>` in config.yml.
 
 no-permission: "&cYou don't have permission"
-usage-root: "&eUsage: /kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world]"
+usage-root: "&eUsage: /kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world] | notify <on|off>"
 player-only: "&cThis command can only be used by a player"
 coords-not-int: "&cCoordinates must be integers"
 chunk-coords-not-int: "&cChunk coordinates must be integers"
@@ -60,3 +60,8 @@ usage-resume: "&eUsage: /kyo resume <cx> <cz>"
 resume-ok: "&aMaterialization resumed: {world} {cx} {cz}"
 usage-resolve: "&eUsage: /kyo resolve <x> <y> <z> [world] (the coordinate should be an already-exposed air/fluid block)"
 resolve-ok: "&aTreated {x} {y} {z} as a removed block and re-ran first-exposure resolution on its neighbors"
+
+usage-notify: "&eUsage: /kyo notify <on|off>"
+notify-on: "&aEnabled: real ore finds now broadcast to online players with kyokalith.admin"
+notify-off: "&7Disabled: ore-find broadcasts turned off"
+ore-found-broadcast: "&b[Kyokalith] &f{player} &7found &f{ore}&7 at {x} {y} {z}"

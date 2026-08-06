@@ -73,6 +73,7 @@ Kotlin stdlib 與 SQLite 驅動由 Bukkit library loader 在啟動時下載,**�
 | `resume` | `<cx> <cz>` | 解除暫停 | 限玩家 |
 | `markeligible` | `[x y z]` | QA 工具:把方塊標 dirty 並寫入一筆 eligible 令牌 | 限玩家 |
 | `giveeligible` | `<玩家> <礦種> <1-64>` | QA 工具:發一疊帶 PDC 令牌的礦方塊 | 主控台可 |
+| `notify` | `<on\|off>` | 切換「玩家挖到真礦時廣播給有 `kyokalith.admin` 的在線玩家」,寫回 `config.yml` 立即生效 | 主控台可 |
 
 `preview` / `sample` 的半徑夾在 `1..24`——這兩個是**刻意保留的暴力掃描例外**,管理員專用,不在熱路徑上。
 
@@ -91,7 +92,7 @@ Kotlin stdlib 與 SQLite 驅動由 Bukkit library loader 在啟動時下載,**�
 
 最常被動到的是礦的 `cell_chance` / `density` / `preferred_y`——**這三個直接等於伺服器經濟的水龍頭**。完整欄位說明、計算公式與紅線在 **[docs/CONFIG.zh-TW.md](docs/CONFIG.zh-TW.md)**。
 
-沒有 `/kyo reload`,設定只在 `onEnable` 讀一次。
+沒有 `/kyo reload`,設定只在 `onEnable` 讀一次——**唯一例外是 `notify_admins_on_ore_find`**,它在每次挖礦事件時即時讀取,`/kyo notify` 切換後不用重啟或重載。
 
 ### 訊息 / 語系
 

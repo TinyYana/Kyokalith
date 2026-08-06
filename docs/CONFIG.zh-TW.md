@@ -37,6 +37,16 @@
 
 ---
 
+## `notify_admins_on_ore_find`
+
+| Key | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `notify_admins_on_ore_find` | Boolean | `false` | 開啟後,玩家挖到真礦(非誘餌)時廣播給所有持有 `kyokalith.admin` 的在線玩家 |
+
+純觀察用的管理便利功能,跟誘餌決算本身無關(監聽自己的 `OreCheckTriggerEvent`,MONITOR 優先度,不影響判定)。用 `/kyo notify <on|off>` 切換,會寫回這個 key 並立即生效——是整份 config 裡**唯一**不需要重啟/重載就能生效的設定(其餘都只在 `onEnable` 讀一次)。
+
+---
+
 ## `database`
 
 | Key | 型別 | 預設 | 說明 |

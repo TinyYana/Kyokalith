@@ -48,6 +48,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
             "suspend" -> suspend(sender, args.drop(1))
             "resume" -> resume(sender, args.drop(1))
             "resolve" -> resolve(sender, args.drop(1))
+            "notify" -> notify(sender, args.drop(1))
             else -> {
                 sender.sendMessage(m("usage-root"))
                 true
@@ -317,6 +318,22 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
         return true
     }
 
+    /** `/kyo notify <on|off>`:切換玩家挖到真礦時是否廣播給有 kyokalith.admin 權限的人。 */
+    private fun notify(sender: CommandSender, args: List<String>): Boolean {
+        val enabled = when (args.firstOrNull()?.lowercase()) {
+            "on" -> true
+            "off" -> false
+            else -> {
+                sender.sendMessage(m("usage-notify"))
+                return true
+            }
+        }
+        plugin.config.set("notify_admins_on_ore_find", enabled)
+        plugin.saveConfig()
+        sender.sendMessage(m(if (enabled) "notify-on" else "notify-off"))
+        return true
+    }
+
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         if (!sender.hasPermission("kyokalith.admin")) return emptyList()
         if (args.size == 1) return SUBCOMMANDS.matching(args[0])
@@ -347,6 +364,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
                 else -> emptyList()
             }
             "suspend", "resume" -> chunkCoordSuggestion(sender, i)
+            "notify" -> if (i == 1) listOf("on", "off") else emptyList()
             else -> emptyList()
         }
         return suggestions.matching(args.last())
@@ -441,7 +459,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
     private data class HitSummary(val scanned: Int, val total: Int, val examples: List<HitExample>)
 
     private companion object {
-        val SUBCOMMANDS = listOf("stats", "inspect", "preview", "sample", "markeligible", "giveeligible", "suspend", "resume", "resolve")
+        val SUBCOMMANDS = listOf("stats", "inspect", "preview", "sample", "markeligible", "giveeligible", "suspend", "resume", "resolve", "notify")
         val RADIUS_SUGGESTIONS = listOf("8", "16", "24")
         val AMOUNT_SUGGESTIONS = listOf("1", "16", "64")
     }

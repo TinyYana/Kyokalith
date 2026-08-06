@@ -4,7 +4,7 @@
 # 啟用:config.yml 設 locale: zh_TW
 
 no-permission: "&c沒有權限"
-usage-root: "&e用法:/kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world]"
+usage-root: "&e用法:/kyo stats | inspect <x> <y> <z> [world] | preview [radius] [x y z [world]] | sample volume [radius] | markeligible [x y z] | giveeligible <player> <oreType> <amount> | suspend <cx> <cz> <reason> | resume <cx> <cz> | resolve <x> <y> <z> [world] | notify <on|off>"
 player-only: "&c這個指令只能由玩家使用"
 coords-not-int: "&c座標必須是整數"
 chunk-coords-not-int: "&cchunk 座標必須是整數"
@@ -59,3 +59,8 @@ usage-resume: "&e用法:/kyo resume <cx> <cz>"
 resume-ok: "&a已恢復材質化:{world} {cx} {cz}"
 usage-resolve: "&e用法:/kyo resolve <x> <y> <z> [world](座標應是已挖開的空氣/流體格)"
 resolve-ok: "&a已把 {x} {y} {z} 視為消失方塊,對其鄰居重跑首次曝露決算"
+
+usage-notify: "&e用法:/kyo notify <on|off>"
+notify-on: "&a已開啟:玩家挖到真礦時會廣播給有 kyokalith.admin 權限的在線玩家"
+notify-off: "&7已關閉:挖礦通知不再廣播"
+ore-found-broadcast: "&b[Kyokalith] &f{player} &7挖到了 &f{ore}&7,座標 {x} {y} {z}"
