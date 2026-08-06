@@ -2,6 +2,12 @@
 
 All notable changes to Kyokalith are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/). The release CI extracts the matching `## [x.y.z]` section as the GitHub Release notes — a tag without a section here fails the release on purpose.
 
+## [1.4.0] - 2026-08-06
+
+### Added
+
+- **Optional admin notification on real ore finds.** When a player mines a real (non-decoy) ore block, Kyokalith can now broadcast it to every online player holding `kyokalith.admin`. Off by default — toggle at runtime with `/kyo notify <on|off>`, which writes `notify_admins_on_ore_find` to `config.yml` and takes effect immediately (the only config key in this plugin that doesn't need a restart). Implemented as a plugin-internal listener on its own `OreCheckTriggerEvent` at `MONITOR` priority with `ignoreCancelled = true`, so it observes only and never affects decoy resolution.
+
 ## [1.3.5] - 2026-07-25
 
 ### Fixed
