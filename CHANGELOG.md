@@ -2,6 +2,19 @@
 
 All notable changes to Kyokalith are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/). The release CI extracts the matching `## [x.y.z]` section as the GitHub Release notes — a tag without a section here fails the release on purpose.
 
+## [1.4.1] - 2026-08-07
+
+### Fixed
+
+- **`/kyo notify off` (and editing `config.yml` directly) could fail to actually stop broadcasts on Folia production servers.** 1.4.0's `OreFindNotifyListener` re-read `plugin.config.getBoolean("notify_admins_on_ore_find", false)` on every mining event, while `/kyo notify <on|off>` wrote the same value from whichever thread issued the command. Bukkit's `YamlConfiguration` is a plain, non-thread-safe `HashMap` under the hood; on Folia the command and the mining event routinely run on different region threads with no memory barrier between them, so a write from one thread had no guaranteed visibility to another — this codebase already treats exactly this class of problem as real (`OreVeinResolver`'s cache is wrapped in `Collections.synchronizedMap` for the same reason), but the notify toggle wasn't given the same treatment. Single-threaded Paper never exposed this, which is also why it shipped unnoticed. Fixed by making a `@Volatile var notifyOnOreFind` on `KyokalithPlugin` the single source of truth: `/kyo notify` writes it (and still persists to `config.yml`), the listener reads it directly instead of touching the config map on the hot path.
+
+### Verification
+
+- `./gradlew test build`: all existing tests pass, no behavior change to any other subsystem.
+- **L3:** Paper 26.2 (build 103) `runServer` booted the 1.4.1 jar cleanly, zero `ERROR`/`Exception` in the log.
+- **L4:** `tools/mineflayer/kyo-notify-toggle-test.js` (new) drives a real Mineflayer bot — bridged from 1.21.11 to 26.2 via ViaVersion/ViaBackwards, since Mineflayer has no native 26.x support yet (`docs/MINEFLAYER_TESTING.md`) — through `/kyo giveeligible` → place → mine with a real pickaxe, asserting on actual chat output: `/kyo notify on` → broadcast received; `/kyo notify off` → no broadcast on an identical break; `config.yml` on disk shows `notify_admins_on_ore_find: false` afterward. All three assertions passed.
+- **Known gap, stated honestly:** this fix's actual root cause is a cross-region-thread race that only exists under Folia's multi-threaded scheduler. Neither the local Paper dev server nor a Via-bridged Mineflayer bot connected to it can reproduce or disprove a Folia-only race — both run everything on one thread. There is no local Folia test rig for this plugin (`runServer`/`run-task` in `build.gradle.kts` only provisions Paper). The `@Volatile` fix is the standard, minimal correctness fix for this exact category of bug (single writer thread, multiple reader threads, no other synchronization needed since it's one primitive flag) and is verified not to regress the feature's logic — but this specific interaction has not been reproduced live on Folia, on this local machine or otherwise.
+
 ## [1.4.0] - 2026-08-06
 
 ### Added

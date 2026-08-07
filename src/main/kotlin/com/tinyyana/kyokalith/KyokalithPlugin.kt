@@ -50,12 +50,28 @@ class KyokalithPlugin : JavaPlugin() {
     var natureReviveBridgeActive: Boolean = false
         private set
 
+    // 挖礦事件在觸發玩家所在 region 的執行緒上處理，/kyo notify 則可能來自主控台或另一名玩家的
+    // region 執行緒——兩者常常不是同一條執行緒。YamlConfiguration 底層是普通 HashMap，非執行緒安全，
+    // 靠它跨執行緒傳遞這個切換值在 Folia 上沒有可見性保證(單執行緒的 Paper 測試不會踩到)。
+    // 用 @Volatile 當唯一真相來源：寫入立刻對所有 region 執行緒可見，讀取也不用每次挖礦事件都碰
+    // config 的 map。
+    @Volatile
+    var notifyOnOreFind: Boolean = false
+        private set
+
     private var cancelDirtyFlush: (() -> Unit)? = null
+
+    fun setNotifyOnOreFind(enabled: Boolean) {
+        notifyOnOreFind = enabled
+        config.set("notify_admins_on_ore_find", enabled)
+        saveConfig()
+    }
 
     override fun onEnable() {
         mergeConfigDefaults()
         Messages.saveBundledTemplates(this)
         messages = Messages.load(this, config.getString("locale", Messages.DEFAULT_LOCALE)!!)
+        notifyOnOreFind = config.getBoolean("notify_admins_on_ore_find", false)
 
         OreRegistry.load(config.getConfigurationSection("ores")).fold(
             onSuccess = { oreRegistry = it },

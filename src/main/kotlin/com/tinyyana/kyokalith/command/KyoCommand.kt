@@ -328,8 +328,7 @@ class KyoCommand(private val plugin: KyokalithPlugin) : CommandExecutor, TabComp
                 return true
             }
         }
-        plugin.config.set("notify_admins_on_ore_find", enabled)
-        plugin.saveConfig()
+        plugin.setNotifyOnOreFind(enabled)
         sender.sendMessage(m(if (enabled) "notify-on" else "notify-off"))
         return true
     }

@@ -19,7 +19,7 @@ class OreFindNotifyListener(private val plugin: KyokalithPlugin) : Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onOreCheck(event: OreCheckTriggerEvent) {
-        if (!plugin.config.getBoolean("notify_admins_on_ore_find", false)) return
+        if (!plugin.notifyOnOreFind) return
         val loc = event.blockLocation
         val message = plugin.messages.get(
             "ore-found-broadcast",
